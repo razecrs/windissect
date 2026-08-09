@@ -1,0 +1,598 @@
+//! Target-independent intermediate representation consumed by every emitter.
+
+use serde::{Deserialize, Serialize};
+
+/// Where a fact came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Provenance {
+    PeExport,
+    Pdb,
+    Demangler,
+    R2Infer,
+    Reflection,
+    Human,
+}
+
+/// Confidence assigned to an observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Confidence {
+    Certain,
+    Likely,
+    Tentative,
+}
+
+/// How far a symbol has been worked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Coverage {
+    Auto,
+    Templated,
+    HumanVerified,
+    EmuTested,
+}
+
+/// Shape classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Kind {
+    Ctor,
+    Dtor,
+    Refcount,
+    Accessor,
+    Thunk,
+    Method,
+    CFunc,
+    Operator,
+    Data,
+    Unknown,
+}
+
+/// A structured C++ type; the display text is kept alongside in [`TypeText`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "t", rename_all = "kebab-case")]
+pub enum Type {
+    Builtin {
+        name: String,
+    },
+    Named {
+        path: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        args: Vec<TypeArg>,
+    },
+    Ptr {
+        to: Box<Type>,
+    },
+    Ref {
+        to: Box<Type>,
+    },
+    Const {
+        of: Box<Type>,
+    },
+    FnPtr {
+        ret: Box<Type>,
+        params: Vec<Type>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        callconv: Option<String>,
+    },
+    /// Parse gap, kept verbatim.
+    Raw {
+        text: String,
+    },
+}
+
+/// A template argument: a type or a non-type constant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TypeArg {
+    Type(Type),
+    Const(i64),
+    Raw(String),
+}
+
+/// A type as structured AST plus its display text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeText {
+    pub text: String,
+    pub ast: Type,
+}
+
+/// Structured signature. `parse_ok=false` means it was not fully structured.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Signature {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>, // public | protected | private
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>, // static | virtual
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callconv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ret: Option<TypeText>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    pub params: Vec<TypeText>,
+    #[serde(default)]
+    pub is_const: bool,
+    pub parse_ok: bool,
+}
+
+/// One exported or internal function/data symbol.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Symbol {
+    /// Stable id across versions (the mangled name, never the address).
+    pub id: String,
+    pub mangled: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demangled: Option<String>,
+    pub vaddr: u64,
+    /// Relative virtual address within the image.
+    #[serde(default)]
+    pub rva: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<u32>,
+    #[serde(default)]
+    pub size: u32,
+    /// Exact procedure length supplied by debug information, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub procedure_size: Option<u32>,
+    /// True when the symbol is known to describe executable code.
+    #[serde(default)]
+    pub is_code: bool,
+    /// PE forwarded-export target, when this is not code in the current image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forwarder: Option<String>,
+    /// Reloc-normalized body hash for impl-change diffing; empty until disasm.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub body_hash: String,
+    pub exported: bool,
+    /// CRT/STL/ETW boilerplate, not dui70's own.
+    #[serde(default)]
+    pub library: bool,
+    pub kind: Kind,
+    pub coverage: Coverage,
+    pub provenance: Provenance,
+    pub confidence: Confidence,
+    pub sig: Signature,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub callers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub calls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
+}
+
+/// Identity of the exact binary an IR was built from (version-diff anchor).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BinaryInfo {
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdb_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdb_guid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdb_age: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base: Option<u64>,
+}
+
+/// A stable reference to bytes/instructions supporting an analysis fact.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EvidenceLocation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rva: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub instruction_rvas: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceKind {
+    PeMetadata,
+    PdbRecord,
+    Instruction,
+    Dataflow,
+    Rtti,
+    Reflection,
+    Relocation,
+    Unwind,
+    Manual,
+    OracleImport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceTool {
+    Windissect,
+    Ida,
+    Radare2,
+    Pdb,
+    PeLoader,
+    Human,
+    Other,
+}
+
+/// One immutable observation. Evidence never directly means a declaration is
+/// safe: claims cite evidence and proofs decide usability.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Evidence {
+    pub id: String,
+    pub kind: EvidenceKind,
+    pub tool: EvidenceTool,
+    pub rule_id: String,
+    pub rule_version: u32,
+    pub location: EvidenceLocation,
+    pub observation: EvidenceObservation,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum EvidenceObservation {
+    MemberAccess {
+        owner: String,
+        offset: u64,
+        width: u32,
+        access: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        suggested_name: Option<String>,
+    },
+    AllocationVtable {
+        owner: String,
+        size: u64,
+        vftable: u64,
+    },
+    ReflectionProperty {
+        owner: String,
+        name: String,
+        getter_symbol: String,
+    },
+    TemplateBase {
+        derived: String,
+        base: String,
+        symbol_id: String,
+    },
+    Text {
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClaimStatus {
+    Observed,
+    Derived,
+    Corroborated,
+    Candidate,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Usability {
+    Verified,
+    #[default]
+    MetadataOnly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ClaimSubject {
+    Member {
+        owner: String,
+        offset: u64,
+        width: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        access: String,
+    },
+    ObjectSize {
+        owner: String,
+        size: u64,
+    },
+    Signature {
+        symbol_id: String,
+        signature: Signature,
+    },
+    Base {
+        derived: String,
+        base: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        offset: Option<i64>,
+        is_virtual: bool,
+    },
+    Property {
+        owner: String,
+        name: String,
+        getter_symbol: String,
+    },
+    VtableSlot {
+        owner: String,
+        table_rva: u32,
+        slot: u32,
+        target_rva: u32,
+    },
+    EnumValue {
+        owner: String,
+        name: String,
+        value: i64,
+    },
+    Callable {
+        symbol_id: String,
+        rva: u32,
+    },
+    Text {
+        category: String,
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Claim {
+    pub id: String,
+    pub subject: ClaimSubject,
+    pub status: ClaimStatus,
+    #[serde(default)]
+    pub usability: Usability,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proof_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofObligation {
+    pub name: String,
+    pub satisfied: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Proof {
+    pub id: String,
+    pub rule_id: String,
+    pub rule_version: u32,
+    pub passed: bool,
+    pub obligations: Vec<ProofObligation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Conflict {
+    pub id: String,
+    pub claim_ids: Vec<String>,
+    pub reason: String,
+    pub resolved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityStatus {
+    Supported,
+    Partial,
+    Unsupported,
+    Skipped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Capability {
+    pub id: String,
+    pub status: CapabilityStatus,
+    pub analyzer: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstructionRecord {
+    pub rva: u32,
+    pub length: u8,
+    pub bytes: String,
+    pub mnemonic: String,
+    pub text: String,
+    pub flow: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_target_rva: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_target_rva: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ControlFlowEdge {
+    pub from_rva: u32,
+    pub to_rva: u32,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionAnalysis {
+    pub rva: u32,
+    pub size: u32,
+    pub symbol_ids: Vec<String>,
+    pub instructions: Vec<InstructionRecord>,
+    pub cfg_edges: Vec<ControlFlowEdge>,
+}
+
+/// The serialized IR. Reserved sections are shaped now for later passes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Database {
+    pub schema: u32,
+    pub generated: String,
+    pub tool: String,
+    pub binary: BinaryInfo,
+    pub symbols: Vec<Symbol>,
+    /// Diagnostics for PDB/RTTI type recovery. This explicitly distinguishes a
+    /// stripped PDB from a successful recovery that happened to find no UDTs.
+    #[serde(default)]
+    pub type_recovery: serde_json::Value,
+    #[serde(default)]
+    pub types: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub vtables: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub classes: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub enums: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub properties: Vec<serde_json::Value>,
+    /// Schema-v2 proof graph. Legacy flattened sections above remain readable
+    /// during migration, but verified emitters must consume these records.
+    #[serde(default)]
+    pub evidence: Vec<Evidence>,
+    #[serde(default)]
+    pub claims: Vec<Claim>,
+    #[serde(default)]
+    pub proofs: Vec<Proof>,
+    #[serde(default)]
+    pub conflicts: Vec<Conflict>,
+    #[serde(default)]
+    pub capabilities: Vec<Capability>,
+    #[serde(default)]
+    pub functions: Vec<FunctionAnalysis>,
+}
+
+impl Database {
+    /// A verified label is valid only when the claim is backed by recorded
+    /// evidence, a passing proof, and no unresolved conflict.
+    pub fn claim_is_proven(&self, claim: &Claim) -> bool {
+        if claim.usability != Usability::Verified || claim.evidence_ids.is_empty() {
+            return false;
+        }
+        let evidence_exists = claim
+            .evidence_ids
+            .iter()
+            .all(|id| self.evidence.iter().any(|item| item.id == *id));
+        let proof_passed = claim.proof_id.as_deref().is_some_and(|id| {
+            self.proofs.iter().any(|proof| {
+                proof.id == id
+                    && proof.passed
+                    && proof
+                        .obligations
+                        .iter()
+                        .all(|obligation| obligation.satisfied)
+            })
+        });
+        let conflicted = self.conflicts.iter().any(|conflict| {
+            !conflict.resolved && conflict.claim_ids.iter().any(|id| id == &claim.id)
+        });
+        evidence_exists && proof_passed && !conflicted
+    }
+
+    /// Callable output requires independently proven addressability and ABI
+    /// signature claims for the same symbol.
+    pub fn symbol_is_verified_callable(&self, symbol_id: &str) -> bool {
+        let callable = self.claims.iter().any(|claim| {
+            matches!(&claim.subject, ClaimSubject::Callable { symbol_id: id, .. } if id == symbol_id)
+                && self.claim_is_proven(claim)
+        });
+        let signature = self.claims.iter().any(|claim| {
+            matches!(&claim.subject, ClaimSubject::Signature { symbol_id: id, .. } if id == symbol_id)
+                && self.claim_is_proven(claim)
+        });
+        callable && signature
+    }
+
+    pub fn vtable_slot_is_verified(&self, table_rva: u32, slot: u32, target_rva: u32) -> bool {
+        self.claims.iter().any(|claim| {
+            matches!(
+                claim.subject,
+                ClaimSubject::VtableSlot {
+                    table_rva: table,
+                    slot: index,
+                    target_rva: target,
+                    ..
+                } if table == table_rva && index == slot && target == target_rva
+            ) && self.claim_is_proven(claim)
+        })
+    }
+
+    /// Upgrade a deserialized legacy database without fabricating proof records.
+    /// Legacy facts remain available in their original flattened sections and
+    /// are explicitly marked as unproven until re-analysis supplies evidence.
+    pub fn migrate(mut self) -> Self {
+        if self.schema < 2 {
+            self.capabilities.push(Capability {
+                id: "schema-v1-legacy-facts".into(),
+                status: CapabilityStatus::Partial,
+                analyzer: "schema-migration".into(),
+                reason:
+                    "legacy flattened facts retained; proof graph unavailable until re-analysis"
+                        .into(),
+            });
+            self.schema = 2;
+        }
+        self
+    }
+}
+
+pub const SCHEMA_VERSION: u32 = 2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn verified_claim() -> Claim {
+        Claim {
+            id: "claim:test".into(),
+            subject: ClaimSubject::Text {
+                category: "test".into(),
+                text: "fact".into(),
+            },
+            status: ClaimStatus::Observed,
+            usability: Usability::Verified,
+            evidence_ids: vec!["ev:test".into()],
+            proof_id: Some("proof:test".into()),
+        }
+    }
+
+    #[test]
+    fn verified_claim_requires_evidence_and_passing_proof() {
+        let claim = verified_claim();
+        let mut db = Database::default();
+        assert!(!db.claim_is_proven(&claim));
+
+        db.evidence.push(Evidence {
+            id: "ev:test".into(),
+            kind: EvidenceKind::Manual,
+            tool: EvidenceTool::Human,
+            rule_id: "test".into(),
+            rule_version: 1,
+            location: EvidenceLocation::default(),
+            observation: EvidenceObservation::Text {
+                text: "fact".into(),
+            },
+        });
+        db.proofs.push(Proof {
+            id: "proof:test".into(),
+            rule_id: "test".into(),
+            rule_version: 1,
+            passed: true,
+            obligations: vec![ProofObligation {
+                name: "test".into(),
+                satisfied: true,
+                detail: "satisfied".into(),
+            }],
+        });
+        assert!(db.claim_is_proven(&claim));
+
+        db.conflicts.push(Conflict {
+            id: "conflict:test".into(),
+            claim_ids: vec![claim.id.clone()],
+            reason: "contradiction".into(),
+            resolved: false,
+        });
+        assert!(!db.claim_is_proven(&claim));
+    }
+}
