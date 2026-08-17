@@ -28,7 +28,11 @@ pub enum TypeKind {
 pub struct FieldDef {
     pub name: String,
     pub type_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
     pub offset: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
     pub is_static: bool,
     pub access: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -40,6 +44,8 @@ pub struct FieldDef {
 #[derive(Debug, Clone, Serialize)]
 pub struct BaseClassDef {
     pub type_index: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
     pub offset: u32,
     pub is_virtual: bool,
     pub access: &'static str,
@@ -66,7 +72,7 @@ pub struct MethodDef {
 #[derive(Debug, Clone, Serialize)]
 pub struct EnumValue {
     pub name: String,
-    pub value: String,
+    pub value: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,6 +105,7 @@ pub struct VTableEntry {
 pub struct VTableDef {
     pub class_type_index: u32,
     pub class_name: String,
+    pub object_offset: i64,
     pub entries: Vec<VTableEntry>,
     pub evidence: &'static str,
 }
@@ -119,28 +126,25 @@ pub fn extract_types(pdb_path: &std::path::Path) -> Result<ExtractedTypes> {
     let tpi = pdb.type_information().context("read PDB TPI stream")?;
     let mut finder = tpi.finder();
 
-    // Populate the random-access finder across the complete stream first.
     let mut index_iter = tpi.iter();
     while index_iter.next()?.is_some() {
         finder.update(&index_iter);
     }
 
-    let mut out = ExtractedTypes {
-        tpi_records: tpi.len(),
-        ..Default::default()
-    };
+    let mut out = initial_extraction(tpi.len());
+    let mut index_names = BTreeMap::<u32, String>::new();
+    let mut complete_sizes = BTreeMap::<String, u32>::new();
     let mut iter = tpi.iter();
     while let Some(item) = iter.next()? {
         let index = item.index();
-        let data = match item.parse() {
-            Ok(data) => data,
-            Err(_) => {
-                out.parse_errors += 1;
-                continue;
-            }
+        let Ok(data) = item.parse() else {
+            out.parse_errors += 1;
+            continue;
         };
         match data {
             TypeData::Class(class) => {
+                let name = class.name.to_string().into_owned();
+                index_names.insert(index.0, name.clone());
                 if class.properties.forward_reference() {
                     out.forward_references += 1;
                     continue;
@@ -150,16 +154,9 @@ pub fn extract_types(pdb_path: &std::path::Path) -> Result<ExtractedTypes> {
                     pdb::ClassKind::Struct => TypeKind::Struct,
                     pdb::ClassKind::Interface => TypeKind::Interface,
                 };
-                let (fields, bases, methods) = collect_fields(&finder, class.fields)?;
-                let name = class.name.to_string().into_owned();
-                let entries = virtual_entries(&methods);
-                if !entries.is_empty() {
-                    out.vtables.push(VTableDef {
-                        class_type_index: index.0,
-                        class_name: name.clone(),
-                        entries,
-                        evidence: "pdb-tpi-virtual-method-order",
-                    });
+                let (fields, bases, methods) = collect_fields(&finder, class.fields);
+                if let Ok(size) = u32::try_from(class.size) {
+                    complete_sizes.insert(name.clone(), size);
                 }
                 out.types.push(ResolvedType {
                     index: index.0,
@@ -175,14 +172,19 @@ pub fn extract_types(pdb_path: &std::path::Path) -> Result<ExtractedTypes> {
                 });
             }
             TypeData::Union(union_) => {
+                let name = union_.name.to_string().into_owned();
+                index_names.insert(index.0, name.clone());
                 if union_.properties.forward_reference() {
                     out.forward_references += 1;
                     continue;
                 }
-                let (fields, _, _) = collect_fields(&finder, Some(union_.fields))?;
+                let (fields, _, _) = collect_fields(&finder, Some(union_.fields));
+                if let Ok(size) = u32::try_from(union_.size) {
+                    complete_sizes.insert(name.clone(), size);
+                }
                 out.types.push(ResolvedType {
                     index: index.0,
-                    name: union_.name.to_string().into_owned(),
+                    name,
                     kind: TypeKind::Union,
                     size: union_.size,
                     packed: union_.properties.packed(),
@@ -194,14 +196,16 @@ pub fn extract_types(pdb_path: &std::path::Path) -> Result<ExtractedTypes> {
                 });
             }
             TypeData::Enumeration(enum_) => {
+                let name = enum_.name.to_string().into_owned();
+                index_names.insert(index.0, name.clone());
                 if enum_.properties.forward_reference() {
                     out.forward_references += 1;
                     continue;
                 }
-                let values = collect_enumerators(&finder, enum_.fields)?;
+                let values = collect_enumerators(&finder, enum_.fields);
                 out.types.push(ResolvedType {
                     index: index.0,
-                    name: enum_.name.to_string().into_owned(),
+                    name,
                     kind: TypeKind::Enum,
                     size: 0,
                     packed: false,
@@ -215,30 +219,145 @@ pub fn extract_types(pdb_path: &std::path::Path) -> Result<ExtractedTypes> {
             _ => {}
         }
     }
+    Ok(finalize_extraction(out, &index_names, &complete_sizes))
+}
+
+fn finalize_extraction(
+    mut out: ExtractedTypes,
+    index_names: &BTreeMap<u32, String>,
+    complete_sizes: &BTreeMap<String, u32>,
+) -> ExtractedTypes {
+    resolve_type_names(&mut out.types, index_names, complete_sizes);
+    out.vtables = reconstruct_vtables(&out.types, index_names);
+    sort_extracted(&mut out);
+    out
+}
+
+fn initial_extraction(tpi_records: usize) -> ExtractedTypes {
+    ExtractedTypes {
+        tpi_records,
+        ..Default::default()
+    }
+}
+
+fn sort_extracted(out: &mut ExtractedTypes) {
     out.types
         .sort_by(|a, b| (&a.name, a.index).cmp(&(&b.name, b.index)));
     out.vtables.sort_by(|a, b| {
         (&a.class_name, a.class_type_index).cmp(&(&b.class_name, b.class_type_index))
     });
-    Ok(out)
+}
+
+fn resolve_type_names(
+    types: &mut [ResolvedType],
+    index_names: &BTreeMap<u32, String>,
+    complete_sizes: &BTreeMap<String, u32>,
+) {
+    for ty in types {
+        for field in &mut ty.fields {
+            field.type_name = index_names.get(&field.type_index).cloned();
+            if field.width.is_none() {
+                field.width = field
+                    .type_name
+                    .as_ref()
+                    .and_then(|name| complete_sizes.get(name).copied());
+            }
+        }
+        for base in &mut ty.bases {
+            base.type_name = index_names.get(&base.type_index).cloned();
+        }
+    }
+}
+
+fn reconstruct_vtables(
+    types: &[ResolvedType],
+    index_names: &BTreeMap<u32, String>,
+) -> Vec<VTableDef> {
+    let complete_by_name: BTreeMap<&str, &ResolvedType> =
+        types.iter().map(|ty| (ty.name.as_str(), ty)).collect();
+    let mut tables = Vec::new();
+    for ty in types {
+        let mut groups = BTreeMap::<i64, Vec<VTableEntry>>::new();
+        let introduced = virtual_entries(&ty.methods);
+        if !introduced.is_empty() {
+            groups.entry(0).or_default().extend(introduced);
+        }
+        for base in &ty.bases {
+            let Some(base_name) = base
+                .type_name
+                .as_deref()
+                .or_else(|| index_names.get(&base.type_index).map(String::as_str))
+            else {
+                continue;
+            };
+            let Some(base_type) = complete_by_name.get(base_name).copied() else {
+                continue;
+            };
+            for base_method in base_type
+                .methods
+                .iter()
+                .filter(|method| method.is_virtual && method.vtable_offset.is_some())
+            {
+                let selected = ty
+                    .methods
+                    .iter()
+                    .find(|method| {
+                        method.is_virtual
+                            && method.name == base_method.name
+                            && method.this_adjustment == base.offset
+                    })
+                    .unwrap_or(base_method);
+                let byte_offset = base_method.vtable_offset.unwrap_or(0);
+                groups
+                    .entry(i64::from(base.offset))
+                    .or_default()
+                    .push(VTableEntry {
+                        slot: byte_offset / 8,
+                        byte_offset,
+                        method_name: selected.name.clone(),
+                        method_type_index: selected.type_index,
+                        this_adjustment: selected.this_adjustment,
+                        is_pure: selected.is_pure,
+                        is_introducing: selected.vtable_offset.is_some(),
+                    });
+            }
+        }
+        for (object_offset, mut entries) in groups {
+            entries.sort_by_key(|entry| entry.slot);
+            entries.dedup_by_key(|entry| entry.slot);
+            if !entries.is_empty() {
+                tables.push(VTableDef {
+                    class_type_index: ty.index,
+                    class_name: ty.name.clone(),
+                    object_offset,
+                    entries,
+                    evidence: "pdb-tpi-virtual-method-order",
+                });
+            }
+        }
+    }
+    tables
 }
 
 type ClassParts = (Vec<FieldDef>, Vec<BaseClassDef>, Vec<MethodDef>);
 
-fn collect_fields(
-    finder: &ItemFinder<'_, TypeIndex>,
-    first: Option<TypeIndex>,
-) -> Result<ClassParts> {
+fn collect_fields(finder: &ItemFinder<'_, TypeIndex>, first: Option<TypeIndex>) -> ClassParts {
     let mut fields = Vec::new();
     let mut bases = Vec::new();
     let mut methods = Vec::new();
     let mut next = first;
     let mut seen = BTreeSet::new();
     while let Some(index) = next {
+        if index.0 == 0 {
+            break;
+        }
         if !seen.insert(index.0) {
             break;
         }
-        let TypeData::FieldList(list) = finder.find(index)?.parse()? else {
+        let Ok(item) = finder.find(index) else {
+            break;
+        };
+        let Ok(TypeData::FieldList(list)) = item.parse() else {
             break;
         };
         next = list.continuation;
@@ -246,10 +365,13 @@ fn collect_fields(
             match field {
                 TypeData::Member(member) => {
                     let (bit_offset, bit_size) = bitfield(finder, member.field_type);
+                    let width = type_size(finder, member.field_type, &mut BTreeSet::new());
                     fields.push(FieldDef {
                         name: member.name.to_string().into_owned(),
                         type_index: member.field_type.0,
+                        type_name: None,
                         offset: member.offset,
+                        width,
                         is_static: false,
                         access: access(member.attributes.access()),
                         bit_offset,
@@ -259,7 +381,9 @@ fn collect_fields(
                 TypeData::StaticMember(member) => fields.push(FieldDef {
                     name: member.name.to_string().into_owned(),
                     type_index: member.field_type.0,
+                    type_name: None,
                     offset: 0,
+                    width: type_size(finder, member.field_type, &mut BTreeSet::new()),
                     is_static: true,
                     access: access(member.attributes.access()),
                     bit_offset: None,
@@ -267,6 +391,7 @@ fn collect_fields(
                 }),
                 TypeData::BaseClass(base) => bases.push(BaseClassDef {
                     type_index: base.base_class.0,
+                    type_name: None,
                     offset: base.offset,
                     is_virtual: false,
                     access: access(base.attributes.access()),
@@ -275,6 +400,7 @@ fn collect_fields(
                 }),
                 TypeData::VirtualBaseClass(base) => bases.push(BaseClassDef {
                     type_index: base.base_class.0,
+                    type_name: None,
                     offset: 0,
                     is_virtual: true,
                     access: access(base.attributes.access()),
@@ -307,7 +433,87 @@ fn collect_fields(
             }
         }
     }
-    Ok((fields, bases, methods))
+    (fields, bases, methods)
+}
+
+fn type_size(
+    finder: &ItemFinder<'_, TypeIndex>,
+    index: TypeIndex,
+    seen: &mut BTreeSet<u32>,
+) -> Option<u32> {
+    if !seen.insert(index.0) {
+        return None;
+    }
+    let data = finder.find(index).ok()?.parse().ok()?;
+    let size = match data {
+        TypeData::Primitive(primitive) => {
+            use pdb::{Indirection, PrimitiveKind};
+            if let Some(indirection) = primitive.indirection {
+                Some(match indirection {
+                    Indirection::Near16 => 2,
+                    Indirection::Far16 | Indirection::Huge16 | Indirection::Near32 => 4,
+                    Indirection::Far32 => 6,
+                    Indirection::Near64 => 8,
+                    Indirection::Near128 => 16,
+                })
+            } else {
+                Some(match primitive.kind {
+                    PrimitiveKind::NoType | PrimitiveKind::Void => 0,
+                    PrimitiveKind::Char
+                    | PrimitiveKind::UChar
+                    | PrimitiveKind::RChar
+                    | PrimitiveKind::I8
+                    | PrimitiveKind::U8
+                    | PrimitiveKind::Bool8 => 1,
+                    PrimitiveKind::WChar
+                    | PrimitiveKind::RChar16
+                    | PrimitiveKind::Short
+                    | PrimitiveKind::UShort
+                    | PrimitiveKind::I16
+                    | PrimitiveKind::U16
+                    | PrimitiveKind::F16
+                    | PrimitiveKind::Bool16 => 2,
+                    PrimitiveKind::RChar32
+                    | PrimitiveKind::Long
+                    | PrimitiveKind::ULong
+                    | PrimitiveKind::I32
+                    | PrimitiveKind::U32
+                    | PrimitiveKind::F32
+                    | PrimitiveKind::F32PP
+                    | PrimitiveKind::Bool32
+                    | PrimitiveKind::HRESULT => 4,
+                    PrimitiveKind::F48 => 6,
+                    PrimitiveKind::Quad
+                    | PrimitiveKind::UQuad
+                    | PrimitiveKind::I64
+                    | PrimitiveKind::U64
+                    | PrimitiveKind::F64
+                    | PrimitiveKind::Complex32
+                    | PrimitiveKind::Bool64 => 8,
+                    PrimitiveKind::F80 => 10,
+                    PrimitiveKind::Octa
+                    | PrimitiveKind::UOcta
+                    | PrimitiveKind::I128
+                    | PrimitiveKind::U128
+                    | PrimitiveKind::F128
+                    | PrimitiveKind::Complex64 => 16,
+                    PrimitiveKind::Complex80 => 20,
+                    PrimitiveKind::Complex128 => 32,
+                    _ => return None,
+                })
+            }
+        }
+        TypeData::Pointer(pointer) => Some(u32::from(pointer.attributes.size())),
+        TypeData::Modifier(modifier) => type_size(finder, modifier.underlying_type, seen),
+        TypeData::Array(array) => array.dimensions.last().copied(),
+        TypeData::Class(class) => u32::try_from(class.size).ok(),
+        TypeData::Union(union_) => u32::try_from(union_.size).ok(),
+        TypeData::Enumeration(enumeration) => type_size(finder, enumeration.underlying_type, seen),
+        TypeData::Bitfield(bitfield) => type_size(finder, bitfield.underlying_type, seen),
+        _ => None,
+    };
+    seen.remove(&index.0);
+    size.filter(|value| *value > 0)
 }
 
 fn resolve_method(
@@ -354,7 +560,7 @@ fn virtual_entries(methods: &[MethodDef]) -> Vec<VTableEntry> {
         .into_iter()
         .enumerate()
         .map(|(slot, (offset, method))| VTableEntry {
-            slot: slot as u32,
+            slot: u32::try_from(slot).unwrap_or(u32::MAX),
             byte_offset: offset,
             method_name: method.name.clone(),
             method_type_index: method.type_index,
@@ -365,31 +571,49 @@ fn virtual_entries(methods: &[MethodDef]) -> Vec<VTableEntry> {
         .collect()
 }
 
-fn collect_enumerators(
-    finder: &ItemFinder<'_, TypeIndex>,
-    first: TypeIndex,
-) -> Result<Vec<EnumValue>> {
+fn collect_enumerators(finder: &ItemFinder<'_, TypeIndex>, first: TypeIndex) -> Vec<EnumValue> {
     let mut values = Vec::new();
     let mut next = Some(first);
     let mut seen = BTreeSet::new();
     while let Some(index) = next {
+        if index.0 == 0 {
+            break;
+        }
         if !seen.insert(index.0) {
             break;
         }
-        let TypeData::FieldList(list) = finder.find(index)?.parse()? else {
+        let Ok(item) = finder.find(index) else {
+            break;
+        };
+        let Ok(TypeData::FieldList(list)) = item.parse() else {
             break;
         };
         next = list.continuation;
         for field in list.fields {
             if let TypeData::Enumerate(value) = field {
+                let number = match value.value {
+                    // LF_CHAR is a signed 8-bit numeric leaf. pdb 0.8 exposes
+                    // it as U8, so preserve the CodeView signed interpretation.
+                    pdb::Variant::U8(number) => i64::from(number.cast_signed()),
+                    pdb::Variant::U16(number) => i64::from(number),
+                    pdb::Variant::U32(number) => i64::from(number),
+                    pdb::Variant::U64(number) => match i64::try_from(number) {
+                        Ok(number) => number,
+                        Err(_) => continue,
+                    },
+                    pdb::Variant::I8(number) => i64::from(number),
+                    pdb::Variant::I16(number) => i64::from(number),
+                    pdb::Variant::I32(number) => i64::from(number),
+                    pdb::Variant::I64(number) => number,
+                };
                 values.push(EnumValue {
                     name: value.name.to_string().into_owned(),
-                    value: format!("{:?}", value.value),
+                    value: number,
                 });
             }
         }
     }
-    Ok(values)
+    values
 }
 
 fn bitfield(finder: &ItemFinder<'_, TypeIndex>, index: TypeIndex) -> (Option<u8>, Option<u8>) {
@@ -404,7 +628,7 @@ fn bitfield(finder: &ItemFinder<'_, TypeIndex>, index: TypeIndex) -> (Option<u8>
         .unwrap_or((None, None))
 }
 
-fn access(value: u8) -> &'static str {
+const fn access(value: u8) -> &'static str {
     match value {
         1 => "private",
         2 => "protected",
@@ -413,7 +637,7 @@ fn access(value: u8) -> &'static str {
     }
 }
 
-fn callconv(value: u8) -> Option<&'static str> {
+const fn callconv(value: u8) -> Option<&'static str> {
     Some(match value {
         0x00 => "__cdecl",
         0x07 => "__stdcall",
@@ -424,7 +648,7 @@ fn callconv(value: u8) -> Option<&'static str> {
     })
 }
 
-pub fn enrich_database_with_types(db: &mut Database, extracted: ExtractedTypes) {
+pub fn enrich_database_with_types(db: &mut Database, extracted: &ExtractedTypes) {
     db.type_recovery = serde_json::json!({
         "source": "pdb-tpi", "records": extracted.tpi_records,
         "forward_references": extracted.forward_references,
@@ -448,7 +672,7 @@ pub fn enrich_database_with_types(db: &mut Database, extracted: ExtractedTypes) 
         .iter()
         .map(|v| serde_json::to_value(v).expect("serializable vtable"))
         .collect();
-    add_pdb_type_proof_graph(db, &extracted);
+    add_pdb_type_proof_graph(db, extracted);
 }
 
 fn add_pdb_type_proof_graph(db: &mut Database, extracted: &ExtractedTypes) {
@@ -462,101 +686,210 @@ fn add_pdb_type_proof_graph(db: &mut Database, extracted: &ExtractedTypes) {
         return;
     }
     for ty in &extracted.types {
-        let proof_id = format!("proof:pdb-type:{:X}", ty.index);
-        db.proofs.push(Proof {
-            id: proof_id.clone(),
+        add_type_proof(db, ty);
+    }
+    add_vtable_proofs(db, &extracted.vtables);
+    db.capabilities.push(Capability {
+        id: "pdb-tpi-layouts".into(),
+        status: CapabilityStatus::Supported,
+        analyzer: "pdbtype".into(),
+        reason: format!("{} resolved type definitions", extracted.types.len()),
+    });
+    db.capabilities.push(Capability {
+        id: "pdb-tpi-aliases".into(),
+        status: CapabilityStatus::Unsupported,
+        analyzer: "pdbtype".into(),
+        reason: "LF_ALIAS records are not exposed by the current PDB parser; aliases are withheld rather than guessed".into(),
+    });
+}
+
+fn add_type_proof(db: &mut Database, ty: &ResolvedType) {
+    let proof_id = format!("proof:pdb-type:{:X}", ty.index);
+    db.proofs.push(Proof {
+        id: proof_id.clone(),
+        rule_id: "pdb.tpi-layout".into(),
+        rule_version: 1,
+        passed: true,
+        obligations: vec![
+            ProofObligation {
+                name: "identity-matched-pdb".into(),
+                satisfied: db.binary.pdb_guid.is_some() && db.binary.pdb_age.is_some(),
+                detail: "PE CodeView GUID+age matched before TPI extraction".into(),
+            },
+            ProofObligation {
+                name: "non-forward-definition".into(),
+                satisfied: true,
+                detail: format!("TPI type index 0x{:X}", ty.index),
+            },
+        ],
+    });
+    let size_evidence = format!("ev:pdb-type-size:{:X}", ty.index);
+    db.evidence.push(Evidence {
+        id: size_evidence.clone(),
+        kind: EvidenceKind::PdbRecord,
+        tool: EvidenceTool::Pdb,
+        rule_id: "pdb.tpi-layout".into(),
+        rule_version: 1,
+        location: EvidenceLocation::default(),
+        observation: EvidenceObservation::Text {
+            text: format!("{} has PDB size 0x{:X}", ty.name, ty.size),
+        },
+    });
+    db.claims.push(Claim {
+        id: format!("claim:pdb-object-size:{:X}", ty.index),
+        subject: ClaimSubject::ObjectSize {
+            owner: ty.name.clone(),
+            size: ty.size,
+        },
+        status: ClaimStatus::Observed,
+        usability: Usability::Verified,
+        evidence_ids: vec![size_evidence],
+        proof_id: Some(proof_id.clone()),
+    });
+    add_field_proofs(db, ty, &proof_id);
+    add_base_proofs(db, ty, &proof_id);
+    add_enum_proofs(db, ty, &proof_id);
+}
+
+fn add_field_proofs(db: &mut Database, ty: &ResolvedType, proof_id: &str) {
+    for (field_index, field) in ty.fields.iter().enumerate() {
+        let evidence_id = format!("ev:pdb-field:{:X}:{field_index}", ty.index);
+        db.evidence.push(Evidence {
+            id: evidence_id.clone(),
+            kind: EvidenceKind::PdbRecord,
+            tool: EvidenceTool::Pdb,
             rule_id: "pdb.tpi-layout".into(),
             rule_version: 1,
-            passed: true,
-            obligations: vec![
-                ProofObligation {
-                    name: "identity-matched-pdb".into(),
-                    satisfied: db.binary.pdb_guid.is_some() && db.binary.pdb_age.is_some(),
-                    detail: "PE CodeView GUID+age matched before TPI extraction".into(),
-                },
-                ProofObligation {
-                    name: "non-forward-definition".into(),
-                    satisfied: true,
-                    detail: format!("TPI type index 0x{:X}", ty.index),
-                },
-            ],
+            location: EvidenceLocation::default(),
+            observation: EvidenceObservation::MemberAccess {
+                owner: ty.name.clone(),
+                offset: field.offset,
+                width: field.width.unwrap_or(0),
+                access: "pdb-layout".into(),
+                suggested_name: Some(field.name.clone()),
+            },
         });
-        let size_evidence = format!("ev:pdb-type-size:{:X}", ty.index);
+        db.claims.push(Claim {
+            id: format!("claim:pdb-field:{:X}:{field_index}", ty.index),
+            subject: ClaimSubject::Member {
+                owner: ty.name.clone(),
+                offset: field.offset,
+                width: field.width.unwrap_or(0),
+                bit_offset: field.bit_offset,
+                bit_size: field.bit_size,
+                type_name: field.type_name.clone(),
+                name: Some(field.name.clone()),
+                structural_only: false,
+                access: "pdb-layout".into(),
+            },
+            status: ClaimStatus::Observed,
+            usability: Usability::Verified,
+            evidence_ids: vec![evidence_id],
+            proof_id: Some(proof_id.to_string()),
+        });
+    }
+}
+
+fn add_base_proofs(db: &mut Database, ty: &ResolvedType, proof_id: &str) {
+    for (base_index, base) in ty.bases.iter().enumerate() {
+        let evidence_id = format!("ev:pdb-base:{:X}:{base_index}", ty.index);
+        let base_name = base
+            .type_name
+            .clone()
+            .unwrap_or_else(|| format!("type-index:0x{:X}", base.type_index));
         db.evidence.push(Evidence {
-            id: size_evidence.clone(),
+            id: evidence_id.clone(),
             kind: EvidenceKind::PdbRecord,
             tool: EvidenceTool::Pdb,
             rule_id: "pdb.tpi-layout".into(),
             rule_version: 1,
             location: EvidenceLocation::default(),
             observation: EvidenceObservation::Text {
-                text: format!("{} has PDB size 0x{:X}", ty.name, ty.size),
+                text: format!("{} base {} at +0x{:X}", ty.name, base_name, base.offset),
             },
         });
         db.claims.push(Claim {
-            id: format!("claim:pdb-object-size:{:X}", ty.index),
-            subject: ClaimSubject::ObjectSize {
-                owner: ty.name.clone(),
-                size: ty.size,
+            id: format!("claim:pdb-base:{:X}:{base_index}", ty.index),
+            subject: ClaimSubject::Base {
+                derived: ty.name.clone(),
+                base: base_name,
+                offset: Some(i64::from(base.offset)),
+                is_virtual: base.is_virtual,
             },
             status: ClaimStatus::Observed,
             usability: Usability::Verified,
-            evidence_ids: vec![size_evidence],
-            proof_id: Some(proof_id.clone()),
+            evidence_ids: vec![evidence_id],
+            proof_id: Some(proof_id.to_string()),
         });
-        for (field_index, field) in ty.fields.iter().enumerate() {
-            let evidence_id = format!("ev:pdb-field:{:X}:{field_index}", ty.index);
+    }
+}
+
+fn add_enum_proofs(db: &mut Database, ty: &ResolvedType, proof_id: &str) {
+    for (value_index, value) in ty.enum_values.iter().enumerate() {
+        let evidence_id = format!("ev:pdb-enum:{:X}:{value_index}", ty.index);
+        db.evidence.push(Evidence {
+            id: evidence_id.clone(),
+            kind: EvidenceKind::PdbRecord,
+            tool: EvidenceTool::Pdb,
+            rule_id: "pdb.tpi-enum".into(),
+            rule_version: 1,
+            location: EvidenceLocation::default(),
+            observation: EvidenceObservation::Text {
+                text: format!("{}::{} = {}", ty.name, value.name, value.value),
+            },
+        });
+        db.claims.push(Claim {
+            id: format!("claim:pdb-enum:{:X}:{value_index}", ty.index),
+            subject: ClaimSubject::EnumValue {
+                owner: ty.name.clone(),
+                name: value.name.clone(),
+                value: value.value,
+            },
+            status: ClaimStatus::Observed,
+            usability: Usability::Verified,
+            evidence_ids: vec![evidence_id],
+            proof_id: Some(proof_id.to_string()),
+        });
+    }
+}
+
+fn add_vtable_proofs(db: &mut Database, tables: &[VTableDef]) {
+    for table in tables {
+        let proof_id = format!("proof:pdb-type:{:X}", table.class_type_index);
+        for entry in &table.entries {
+            let evidence_id = format!(
+                "ev:pdb-vslot:{:X}:{}:{}",
+                table.class_type_index, table.object_offset, entry.slot
+            );
             db.evidence.push(Evidence {
                 id: evidence_id.clone(),
                 kind: EvidenceKind::PdbRecord,
                 tool: EvidenceTool::Pdb,
-                rule_id: "pdb.tpi-layout".into(),
-                rule_version: 1,
-                location: EvidenceLocation::default(),
-                observation: EvidenceObservation::MemberAccess {
-                    owner: ty.name.clone(),
-                    offset: field.offset,
-                    width: 0,
-                    access: "pdb-layout".into(),
-                    suggested_name: Some(field.name.clone()),
-                },
-            });
-            db.claims.push(Claim {
-                id: format!("claim:pdb-field:{:X}:{field_index}", ty.index),
-                subject: ClaimSubject::Member {
-                    owner: ty.name.clone(),
-                    offset: field.offset,
-                    width: 0,
-                    name: Some(field.name.clone()),
-                    access: "pdb-layout".into(),
-                },
-                status: ClaimStatus::Observed,
-                usability: Usability::Verified,
-                evidence_ids: vec![evidence_id],
-                proof_id: Some(proof_id.clone()),
-            });
-        }
-        for (base_index, base) in ty.bases.iter().enumerate() {
-            let evidence_id = format!("ev:pdb-base:{:X}:{base_index}", ty.index);
-            let base_name = format!("type-index:0x{:X}", base.type_index);
-            db.evidence.push(Evidence {
-                id: evidence_id.clone(),
-                kind: EvidenceKind::PdbRecord,
-                tool: EvidenceTool::Pdb,
-                rule_id: "pdb.tpi-layout".into(),
+                rule_id: "pdb.tpi-vtable-order".into(),
                 rule_version: 1,
                 location: EvidenceLocation::default(),
                 observation: EvidenceObservation::Text {
-                    text: format!("{} base {} at +0x{:X}", ty.name, base_name, base.offset),
+                    text: format!(
+                        "{} subobject {:+#X} vtable slot {} at byte offset 0x{:X}: {}",
+                        table.class_name,
+                        table.object_offset,
+                        entry.slot,
+                        entry.byte_offset,
+                        entry.method_name
+                    ),
                 },
             });
             db.claims.push(Claim {
-                id: format!("claim:pdb-base:{:X}:{base_index}", ty.index),
-                subject: ClaimSubject::Base {
-                    derived: ty.name.clone(),
-                    base: base_name,
-                    offset: Some(i64::from(base.offset)),
-                    is_virtual: base.is_virtual,
+                id: format!(
+                    "claim:pdb-vslot:{:X}:{}:{}",
+                    table.class_type_index, table.object_offset, entry.slot
+                ),
+                subject: ClaimSubject::VtableSlot {
+                    owner: table.class_name.clone(),
+                    table_rva: 0,
+                    table_object_offset: Some(table.object_offset),
+                    slot: entry.slot,
+                    target_rva: 0,
                 },
                 status: ClaimStatus::Observed,
                 usability: Usability::Verified,
@@ -565,12 +898,6 @@ fn add_pdb_type_proof_graph(db: &mut Database, extracted: &ExtractedTypes) {
             });
         }
     }
-    db.capabilities.push(Capability {
-        id: "pdb-tpi-layouts".into(),
-        status: CapabilityStatus::Supported,
-        analyzer: "pdbtype".into(),
-        reason: format!("{} resolved type definitions", extracted.types.len()),
-    });
 }
 
 #[cfg(test)]

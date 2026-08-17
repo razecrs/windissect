@@ -52,7 +52,23 @@ target\release\windissect emit-rust --ir ir\dwmapi.json --out rust\dwmapi-sys
 target\release\windissect emit-syms --ir ir\dwmapi.json --out syms
 target\release\windissect diff ir\old\dwmapi.json ir\new\dwmapi.json --json-out changes.json --markdown-out changes.md
 target\release\windissect record-build ir\dwmapi.json --history history
+target\release\windissect refine --semantic --ir ir\dwmapi.json --binary C:\Windows\System32\dwmapi.dll --out refinement\dwmapi.json --out-ir ir\dwmapi.semantic.json --semantic-out semantic\dwmapi
+target\release\windissect refine --ir ir\dwmapi.json --reference path\to\headers --out refinement\dwmapi-reference.json --out-ir ir\dwmapi.refined.json
 ```
+
+`emit-headers` writes a compile-gated primary `<target>.h` containing verified
+ABI metadata and proof-gated call helpers. Exhaustive reconstructed class
+declarations are kept in `<target>_candidates.h`; that opt-in umbrella may
+contain unresolved language or ownership ambiguities and is not presented as
+an ABI-safe SDK.
+
+Reference-guided refinement writes a proof-gated recovery queue into the
+refined IR. A reference declaration can open a job, but only independently
+recorded PE/PDB/disassembly evidence can move that job to `verified`.
+Semantic refinement also writes `recovery-plan.json` and `recovery-plan.md`.
+This target-independent queue is derived only from the IR and ranks unresolved
+ABI, layout, inheritance, vtable, enum, and proof-conflict facts by the next
+independent evidence route; it does not require a reference project.
 
 For the quickest reproducible run on a fresh Windows clone:
 
@@ -60,7 +76,7 @@ For the quickest reproducible run on a fresh Windows clone:
 pwsh -File scripts/demo.ps1
 ```
 
-This analyzes the installed `amsi.dll`, verifies the resulting schema-v2 IR,
+This analyzes the installed `amsi.dll`, verifies the resulting schema-v3 IR,
 and emits C, C++, Rust, symbol, and evidence surfaces under `target/demo/`.
 
 ## Build history and diffs
@@ -100,9 +116,10 @@ Microsoft binaries and PDBs are not distributed by this repository.
 
 ## Status
 
-Version 0.1.0 includes the generic PE/PDB IR,
-multi-target fleet, PE-native RTTI/vftable recovery, conservative layout
-observations, evidence/proof graph, and per-build semantic diffing are working.
+Version 0.1.0 includes the generic PE/PDB IR, multi-target fleet, PE-native
+RTTI/vftable recovery, proof-gated MSVC x64 semantic layouts, separate
+verified/candidate C++ and Rust output, conservative layout observations,
+evidence/proof graph, and per-build semantic diffing.
 DUI70 is the deep validation corpus; AMSI is the small unrelated reproducible
 case. Layout claims without certified proof remain experimental and are not
 promoted into callable declarations. Release evidence and artifact hashes are
@@ -111,6 +128,13 @@ recorded in [RELEASE.md](RELEASE.md).
 The included x64 member-access evidence pack is deliberately marked `draft`;
 its observations remain metadata-only until the documented cross-binary corpus
 gate is satisfied.
+
+The owned semantic fixture measures exact-build class, union, bitfield,
+inheritance, vtable, and enum facts with `score-semantic`; its current oracle
+requires at least 99.9% precision. Typedef aliases are withheld because the
+current PDB parser does not expose CodeView `LF_ALIAS` records. Runtime probing
+is opt-in, isolated, exact-build checked, and DLL-only. SYS analysis remains
+static.
 
 Generated trees, downloaded Microsoft binaries/PDBs, IDA databases, and the
 143.2 MiB canonical DUI70 IR are deliberately excluded from Git. This avoids

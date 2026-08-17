@@ -3,6 +3,7 @@
 use crate::model::Database;
 use anyhow::Result;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -19,7 +20,7 @@ pub fn generate_all(db: Option<&Database>, out_dir: &Path) -> Result<()> {
 }
 
 fn generate_codebase_md(path: &Path) -> Result<()> {
-    let content = r#"# Codebase Architecture
+    let content = r"# Codebase Architecture
 
 Overview of the Windissect PE/PDB extraction pipeline and module structure.
 
@@ -59,7 +60,7 @@ Generates C++ headers and a target-specific buildable Rust FFI crate.
 
 ### 6. `verify.rs`
 Validates that generated IR matches schema rules and ground-truth method signatures.
-"#;
+";
     fs::write(path, content)?;
     Ok(())
 }
@@ -130,12 +131,13 @@ fn generate_api_md(db: &Database, api_dir: &Path) -> Result<()> {
     }
 
     let mut index = String::new();
-    index.push_str(&format!("# {} API Reference\n\n", db.binary.file));
-    index.push_str(&format!(
+    let _ = write!(index, "# {} API Reference\n\n", db.binary.file);
+    let _ = write!(
+        index,
         "Total symbols: **{}** | Total classes: **{}**\n\n",
         db.symbols.len(),
         classes.len()
-    ));
+    );
 
     // Category Table of Contents
     index.push_str("## Category Index\n\n");
@@ -154,7 +156,7 @@ fn generate_api_md(db: &Database, api_dir: &Path) -> Result<()> {
             .split_whitespace()
             .collect::<Vec<_>>()
             .join("-");
-        index.push_str(&format!("- [{cat}](#{anchor})\n"));
+        let _ = writeln!(index, "- [{cat}](#{anchor})");
     }
     index.push_str("\n---\n\n");
 
@@ -167,7 +169,7 @@ fn generate_api_md(db: &Database, api_dir: &Path) -> Result<()> {
 
     // Render each category
     for (cat, class_list) in &categorized {
-        index.push_str(&format!("## {cat}\n\n"));
+        let _ = write!(index, "## {cat}\n\n");
         index.push_str("| Namespace | Class | Members | Link |\n|---|---|---|---|\n");
 
         for (ns, class, count) in class_list {
@@ -184,51 +186,12 @@ fn generate_api_md(db: &Database, api_dir: &Path) -> Result<()> {
                     }
                 )
             };
-            index.push_str(&format!(
-                "| `{ns}` | `{class}` | {count} | [{class}](./{file_name}) |\n"
-            ));
-
-            let mut class_page = String::new();
-            class_page.push_str(&format!(
-                "# `{}` :: `{}`\n\n",
-                if ns.is_empty() { "global" } else { ns },
-                class
-            ));
-            class_page.push_str(&format!("**Category:** [{cat}](./README.md)\n\n"));
-            class_page.push_str(&format!(
-                "Reconstructed from `{}`. Total members: **{}**.\n\n",
-                db.binary.file, count
-            ));
-            class_page.push_str("```cpp\n");
-            class_page.push_str(&crate::emit::cpp_class(db, ns, class));
-            class_page.push_str("\n```\n\n");
-
-            class_page.push_str("## Member List\n\n");
-            class_page.push_str(
-                "| Method | Return | Shape | Provenance | Exported |\n|---|---|---|---|---|\n",
+            let _ = writeln!(
+                index,
+                "| `{ns}` | `{class}` | {count} | [{class}](./{file_name}) |"
             );
 
-            for s in db.symbols.iter().filter(|s| {
-                !s.library
-                    && s.sig.parse_ok
-                    && s.sig.namespace.as_deref().unwrap_or("") == *ns
-                    && s.sig.class.as_deref() == Some(class)
-            }) {
-                let m = s.sig.method.as_deref().unwrap_or("?");
-                let ret = s
-                    .sig
-                    .ret
-                    .as_ref()
-                    .map(|t| t.text.as_str())
-                    .unwrap_or("void");
-                let kind = format!("{:?}", s.kind);
-                let prov = format!("{:?}", s.provenance);
-                let exp = if s.exported { "Yes" } else { "No (PDB)" };
-                class_page.push_str(&format!(
-                    "| `{m}` | `{ret}` | `{kind}` | `{prov}` | {exp} |\n"
-                ));
-            }
-
+            let class_page = render_class_page(db, ns, class, *count, cat);
             fs::write(api_dir.join(&file_name), class_page)?;
         }
         index.push('\n');
@@ -236,4 +199,41 @@ fn generate_api_md(db: &Database, api_dir: &Path) -> Result<()> {
 
     fs::write(api_dir.join("README.md"), index)?;
     Ok(())
+}
+
+fn render_class_page(db: &Database, ns: &str, class: &str, count: usize, category: &str) -> String {
+    let mut page = String::new();
+    let display_namespace = if ns.is_empty() { "global" } else { ns };
+    let _ = write!(page, "# `{display_namespace}` :: `{class}`\n\n");
+    let _ = write!(page, "**Category:** [{category}](./README.md)\n\n");
+    let _ = write!(
+        page,
+        "Reconstructed from `{}`. Total members: **{count}**.\n\n",
+        db.binary.file
+    );
+    page.push_str("```cpp\n");
+    page.push_str(&crate::emit::cpp_class(db, ns, class));
+    page.push_str("\n```\n\n## Member List\n\n");
+    page.push_str("| Method | Return | Shape | Provenance | Exported |\n|---|---|---|---|---|\n");
+    for symbol in db.symbols.iter().filter(|symbol| {
+        !symbol.library
+            && symbol.sig.parse_ok
+            && symbol.sig.namespace.as_deref().unwrap_or("") == ns
+            && symbol.sig.class.as_deref() == Some(class)
+    }) {
+        let method = symbol.sig.method.as_deref().unwrap_or("?");
+        let ret = symbol
+            .sig
+            .ret
+            .as_ref()
+            .map_or("void", |ty| ty.text.as_str());
+        let kind = format!("{:?}", symbol.kind);
+        let provenance = format!("{:?}", symbol.provenance);
+        let exported = if symbol.exported { "Yes" } else { "No (PDB)" };
+        let _ = writeln!(
+            page,
+            "| `{method}` | `{ret}` | `{kind}` | `{provenance}` | {exported} |"
+        );
+    }
+    page
 }

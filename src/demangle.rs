@@ -45,6 +45,14 @@ pub fn parse_decl(decl: &str) -> Signature {
         s = rest;
     }
 
+    // MSVC renders a method returning a function pointer as
+    // `R (ret_cc * method_cc C::f(args))(callback_args)`. The method's
+    // parameter list is nested inside the return declarator, so selecting the
+    // final top-level parentheses would mistake callback_args for f's args.
+    if parse_function_pointer_return(s, &mut sig) {
+        return sig;
+    }
+
     // Parameter list = the last top-level (...); optional trailing " const".
     let Some((open, close)) = typeparse::last_top_parens(s) else {
         return sig; // not a function decl (data/vftable/RTTI)
@@ -69,17 +77,8 @@ pub fn parse_decl(decl: &str) -> Signature {
     let qual = head[cc_idx + cc.len()..].trim();
 
     // Qualified name -> namespace / class / method (top-level "::" split).
-    let parts = split_sep_top(qual, "::");
-    match parts.len() {
-        0 => return sig,
-        1 => sig.method = Some(parts[0].to_string()),
-        n => {
-            sig.method = Some(parts[n - 1].to_string());
-            sig.class = Some(parts[n - 2].to_string());
-            if n > 2 {
-                sig.namespace = Some(parts[..n - 2].join("::"));
-            }
-        }
+    if !assign_qualified_name(&mut sig, qual) {
+        return sig;
     }
 
     // Parameters (top-level comma split; "void" = none).
@@ -90,6 +89,65 @@ pub fn parse_decl(decl: &str) -> Signature {
 
     sig.parse_ok = true;
     sig
+}
+
+fn parse_function_pointer_return(decl: &str, sig: &mut Signature) -> bool {
+    let mut selected = None;
+    for cc in CALLCONVS {
+        let needle = format!(" {cc} ");
+        for (index, _) in decl.match_indices(&needle) {
+            let tail = decl[index + needle.len()..].trim_start();
+            let Some(open) = tail.find('(') else { continue };
+            let qual = tail[..open].trim();
+            if qual.contains("::") {
+                selected = Some((index, *cc, tail, open));
+            }
+        }
+    }
+    let Some((cc_index, cc, tail, open)) = selected else {
+        return false;
+    };
+    let Some(close_rel) = tail[open..].find(')') else {
+        return false;
+    };
+    let close = open + close_rel;
+    let after = tail[close + 1..].trim_start();
+    if !after.starts_with(")(") {
+        return false;
+    }
+    let qual = tail[..open].trim();
+    if !assign_qualified_name(sig, qual) {
+        return false;
+    }
+    sig.callconv = Some(cc.to_string());
+    let params = tail[open + 1..close].trim();
+    if !params.is_empty() && params != "void" {
+        sig.params = split_top(params, ',').into_iter().map(type_text).collect();
+    }
+    let return_prefix = decl[..cc_index].trim();
+    let callback_suffix = after.strip_prefix(')').unwrap_or(after);
+    sig.ret = Some(type_text(&format!("{return_prefix}){callback_suffix}")));
+    sig.parse_ok = true;
+    true
+}
+
+fn assign_qualified_name(sig: &mut Signature, qual: &str) -> bool {
+    let parts = split_sep_top(qual, "::");
+    match parts.len() {
+        0 => false,
+        1 => {
+            sig.method = Some(parts[0].to_string());
+            true
+        }
+        n => {
+            sig.method = Some(parts[n - 1].to_string());
+            sig.class = Some(parts[n - 2].to_string());
+            if n > 2 {
+                sig.namespace = Some(parts[..n - 2].join("::"));
+            }
+            true
+        }
+    }
 }
 
 /// Assign a shape by name and structure.
@@ -150,4 +208,22 @@ fn is_accessor(name: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_decl;
+
+    #[test]
+    fn parses_method_returning_function_pointer() {
+        let sig = parse_decl(
+            "public: class DirectUI::Value * (__cdecl * __cdecl DirectUI::DUIXmlParser::GetGetSheetCallback(void))(unsigned short const *, void *)",
+        );
+        assert!(sig.parse_ok);
+        assert_eq!(sig.namespace.as_deref(), Some("DirectUI"));
+        assert_eq!(sig.class.as_deref(), Some("DUIXmlParser"));
+        assert_eq!(sig.method.as_deref(), Some("GetGetSheetCallback"));
+        assert!(sig.params.is_empty());
+        assert_eq!(sig.callconv.as_deref(), Some("__cdecl"));
+    }
 }

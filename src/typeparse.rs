@@ -125,7 +125,7 @@ fn parse_arg(s: &str) -> TypeArg {
     }
 }
 
-/// `RET (__cc *)(P1, P2)` -> FnPtr. Returns None if `s` isn't that shape.
+/// `RET (__cc *)(P1, P2)` -> `FnPtr`. Returns None if `s` isn't that shape.
 fn parse_fnptr(s: &str) -> Option<Type> {
     let open1 = top_level_index(s, '(')?;
     let close1 = matching_paren(s, open1)?;
@@ -139,7 +139,7 @@ fn parse_fnptr(s: &str) -> Option<Type> {
     let close2 = matching_paren(rest, open2)?;
     let params_str = &rest[open2 + 1..close2];
 
-    let ret = Box::new(parse(s[..open1].trim()));
+    let result_type = Box::new(parse(s[..open1].trim()));
     let callconv = inner
         .split_whitespace()
         .find(|w| w.starts_with("__"))
@@ -153,7 +153,7 @@ fn parse_fnptr(s: &str) -> Option<Type> {
             .collect()
     };
     Some(Type::FnPtr {
-        ret,
+        ret: result_type,
         params,
         callconv,
     })
@@ -161,7 +161,7 @@ fn parse_fnptr(s: &str) -> Option<Type> {
 
 // ---- nesting-aware scanners (depth over <>, (), []) -----------------------
 
-fn delta(c: char) -> i32 {
+const fn delta(c: char) -> i32 {
     match c {
         '<' | '(' | '[' => 1,
         '>' | ')' | ']' => -1,

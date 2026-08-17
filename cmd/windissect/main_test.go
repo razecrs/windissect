@@ -57,3 +57,16 @@ func TestReplaceFileOverwritesExistingDestination(t *testing.T) {
 		t.Fatalf("backup was not removed: %v", err)
 	}
 }
+
+func TestInstalledNotepadPackageCanBeResolved(t *testing.T) {
+	programFiles := os.Getenv("ProgramFiles")
+	root := filepath.Join(programFiles, "WindowsApps")
+	installed := resolveTargetPath(targetSpec{File: "Notepad.exe", Source: "notepad-app-x64"}, os.Getenv("SystemRoot"), t.TempDir())
+	if installed == "" {
+		t.Skip("modern Notepad x64 package is not installed")
+	}
+	got := resolveTargetPath(targetSpec{File: "Notepad.exe", Source: "notepad-app-x64"}, os.Getenv("SystemRoot"), t.TempDir())
+	if got == "" {
+		t.Fatalf("installed Notepad did not resolve from %q", root)
+	}
+}

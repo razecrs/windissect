@@ -4,6 +4,7 @@ use crate::model::{Database, Symbol};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,17 +57,31 @@ pub struct SymbolState {
     pub imports: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Changed(bool);
+
+impl Changed {
+    const fn new(value: bool) -> Self {
+        Self(value)
+    }
+
+    const fn get(self) -> bool {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChangeFlags {
-    pub signature: bool,
-    pub implementation: bool,
-    pub calls: bool,
-    pub imports: bool,
-    pub size: bool,
-    pub kind: bool,
-    pub export_status: bool,
+    pub signature: Changed,
+    pub implementation: Changed,
+    pub calls: Changed,
+    pub imports: Changed,
+    pub size: Changed,
+    pub kind: Changed,
+    pub export_status: Changed,
     /// Address movement is recorded but deliberately not considered behavioral.
-    pub rva: bool,
+    pub rva: Changed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,25 +112,27 @@ pub fn compare(old: &Database, new: &Database) -> DiffReport {
         let before = &old_map[id];
         let after = &new_map[id];
         let flags = ChangeFlags {
-            signature: before.signature != after.signature,
-            implementation: !before.body_hash.is_empty()
-                && !after.body_hash.is_empty()
-                && before.body_hash != after.body_hash,
-            calls: before.calls != after.calls,
-            imports: before.imports != after.imports,
-            size: before.size != after.size,
-            kind: before.kind != after.kind,
-            export_status: before.exported != after.exported,
-            rva: before.rva != after.rva,
+            signature: Changed::new(before.signature != after.signature),
+            implementation: Changed::new(
+                !before.body_hash.is_empty()
+                    && !after.body_hash.is_empty()
+                    && before.body_hash != after.body_hash,
+            ),
+            calls: Changed::new(before.calls != after.calls),
+            imports: Changed::new(before.imports != after.imports),
+            size: Changed::new(before.size != after.size),
+            kind: Changed::new(before.kind != after.kind),
+            export_status: Changed::new(before.exported != after.exported),
+            rva: Changed::new(before.rva != after.rva),
         };
-        if flags.signature
-            || flags.implementation
-            || flags.calls
-            || flags.imports
-            || flags.size
-            || flags.kind
-            || flags.export_status
-            || flags.rva
+        if flags.signature.get()
+            || flags.implementation.get()
+            || flags.calls.get()
+            || flags.imports.get()
+            || flags.size.get()
+            || flags.kind.get()
+            || flags.export_status.get()
+            || flags.rva.get()
         {
             modified.push(SymbolChange {
                 id: id.clone(),
@@ -132,10 +149,13 @@ pub fn compare(old: &Database, new: &Database) -> DiffReport {
         added: added.len(),
         removed: removed.len(),
         modified: modified.len(),
-        signature_changes: modified.iter().filter(|c| c.flags.signature).count(),
-        implementation_changes: modified.iter().filter(|c| c.flags.implementation).count(),
-        call_graph_changes: modified.iter().filter(|c| c.flags.calls).count(),
-        import_changes: modified.iter().filter(|c| c.flags.imports).count(),
+        signature_changes: modified.iter().filter(|c| c.flags.signature.get()).count(),
+        implementation_changes: modified
+            .iter()
+            .filter(|c| c.flags.implementation.get())
+            .count(),
+        call_graph_changes: modified.iter().filter(|c| c.flags.calls.get()).count(),
+        import_changes: modified.iter().filter(|c| c.flags.imports.get()).count(),
     };
 
     DiffReport {
@@ -157,8 +177,7 @@ fn symbol_map(db: &Database) -> BTreeMap<String, SymbolState> {
             .filter(|s| s.vaddr != 0)
             .map(|s| s.vaddr)
             .min()
-            .map(|v| v & !0xFFFF)
-            .unwrap_or(0)
+            .map_or(0, |v| v & !0xFFFF)
     });
     let mut groups: BTreeMap<String, Vec<&Symbol>> = BTreeMap::new();
     for symbol in &db.symbols {
@@ -256,35 +275,36 @@ pub fn markdown(report: &DiffReport) -> String {
         out.push_str("\n## Modified\n\n| Symbol | Changes |\n|---|---|\n");
         for change in &report.modified {
             let mut flags = Vec::new();
-            if change.flags.signature {
+            if change.flags.signature.get() {
                 flags.push("signature");
             }
-            if change.flags.implementation {
+            if change.flags.implementation.get() {
                 flags.push("implementation");
             }
-            if change.flags.calls {
+            if change.flags.calls.get() {
                 flags.push("calls");
             }
-            if change.flags.imports {
+            if change.flags.imports.get() {
                 flags.push("imports");
             }
-            if change.flags.size {
+            if change.flags.size.get() {
                 flags.push("size");
             }
-            if change.flags.kind {
+            if change.flags.kind.get() {
                 flags.push("kind");
             }
-            if change.flags.export_status {
+            if change.flags.export_status.get() {
                 flags.push("export-status");
             }
-            if change.flags.rva {
+            if change.flags.rva.get() {
                 flags.push("rva");
             }
-            out.push_str(&format!(
-                "| `{}` | {} |\n",
+            let _ = writeln!(
+                out,
+                "| `{}` | {} |",
                 display_name(&change.after),
                 flags.join(", ")
-            ));
+            );
         }
     }
     out
@@ -296,8 +316,7 @@ fn build_label(build: &BuildRef) -> String {
         build.pdb_guid.as_deref().unwrap_or("no-pdb"),
         build
             .pdb_age
-            .map(|v| format!("{v:X}"))
-            .unwrap_or_else(|| "?".into())
+            .map_or_else(|| "?".into(), |v| format!("{v:X}"))
     )
 }
 
@@ -310,13 +329,13 @@ fn section<'a>(out: &mut String, title: &str, values: impl Iterator<Item = &'a s
     if values.is_empty() {
         return;
     }
-    out.push_str(&format!("\n## {title}\n\n"));
+    let _ = write!(out, "\n## {title}\n\n");
     for value in values {
-        out.push_str(&format!("- `{value}`\n"));
+        let _ = writeln!(out, "- `{value}`");
     }
 }
 
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let tmp = path.with_extension(format!(
@@ -340,7 +359,7 @@ mod tests {
             id: id.into(),
             mangled: id.into(),
             demangled: Some(id.into()),
-            vaddr: 0x180001000,
+            vaddr: 0x0001_8000_1000,
             rva: 0x1000,
             ordinal: None,
             size: 4,

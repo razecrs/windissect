@@ -2,12 +2,49 @@ use crate::model::{
     Capability, CapabilityStatus, Claim, ClaimStatus, ClaimSubject, Database, Evidence,
     EvidenceKind, EvidenceLocation, EvidenceObservation, EvidenceTool, Usability,
 };
-use anyhow::Result;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Recover static DirectUI reflection property schemas and enum maps.
-pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
+/// Recover static `DirectUI` reflection property schemas and enum maps.
+pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) {
+    let (properties_map, class_property_count, mut evidence, mut claims) =
+        property_observations(db);
+    let inferred_bases = infer_template_bases(db);
+    let mut class_records = existing_class_records(db);
+    apply_property_counts(&mut class_records, class_property_count);
+    apply_inferred_bases(
+        &mut class_records,
+        inferred_bases,
+        &mut evidence,
+        &mut claims,
+    );
+    db.properties = properties_map.into_values().flatten().collect();
+    db.classes = class_records.into_values().collect();
+    let property_claims = claims
+        .iter()
+        .filter(|claim| matches!(claim.subject, ClaimSubject::Property { .. }))
+        .count();
+    let base_claims = claims.len().saturating_sub(property_claims);
+    db.evidence.extend(evidence);
+    db.claims.extend(claims);
+    db.capabilities.push(Capability {
+        id: "msvc-reflection".into(),
+        status: CapabilityStatus::Partial,
+        analyzer: "reflection".into(),
+        reason: format!(
+            "{property_claims} properties observed; {base_claims} template base candidates have no proven offsets"
+        ),
+    });
+}
+
+type PropertyObservations = (
+    BTreeMap<String, Vec<serde_json::Value>>,
+    BTreeMap<String, usize>,
+    Vec<Evidence>,
+    Vec<Claim>,
+);
+
+fn property_observations(db: &Database) -> PropertyObservations {
     let mut properties_map: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     let mut class_property_count: BTreeMap<String, usize> = BTreeMap::new();
     let mut evidence = Vec::new();
@@ -93,9 +130,10 @@ pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
         }
     }
 
-    // 2. Recover inheritance encoded by concrete reflection factory templates,
-    // e.g. ClassInfo<Derived, Base, Creator>. This is symbol-backed evidence,
-    // not a substitute for a PDB field layout.
+    (properties_map, class_property_count, evidence, claims)
+}
+
+fn infer_template_bases(db: &Database) -> BTreeMap<String, (String, String, u32)> {
     let mut inferred_bases: BTreeMap<String, (String, String, u32)> = BTreeMap::new();
     for symbol in &db.symbols {
         let Some(demangled) = symbol.demangled.as_deref() else {
@@ -112,21 +150,15 @@ pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
         if !derived.is_empty() && !base.is_empty() && derived != base {
             inferred_bases
                 .entry(derived)
-                .or_insert((base, symbol.id.clone(), symbol.rva));
+                .or_insert_with(|| (base, symbol.id.clone(), symbol.rva));
         }
     }
 
-    // 3. Populate properties and merge class evidence. Never discard rich
-    // PDB/RTTI records created by an earlier recovery phase.
-    let mut all_props = Vec::new();
-    for (_class_name, props) in properties_map {
-        for p in props {
-            all_props.push(p);
-        }
-    }
+    inferred_bases
+}
 
-    let mut class_records: BTreeMap<String, serde_json::Value> = db
-        .classes
+fn existing_class_records(db: &mut Database) -> BTreeMap<String, serde_json::Value> {
+    db.classes
         .drain(..)
         .filter_map(|value| {
             value
@@ -134,16 +166,30 @@ pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
                 .as_str()
                 .map(|name| (name.to_string(), value.clone()))
         })
-        .collect();
-    for (class_name, count) in class_property_count {
-        let record = class_records
+        .collect()
+}
+
+fn apply_property_counts(
+    records: &mut BTreeMap<String, serde_json::Value>,
+    counts: BTreeMap<String, usize>,
+) {
+    for (class_name, count) in counts {
+        let record = records
             .entry(class_name.clone())
             .or_insert_with(|| json!({ "name": class_name }));
         if let Some(object) = record.as_object_mut() {
             object.insert("property_count".into(), json!(count));
         }
     }
-    for (derived, (base, symbol_id, rva)) in inferred_bases {
+}
+
+fn apply_inferred_bases(
+    records: &mut BTreeMap<String, serde_json::Value>,
+    bases: BTreeMap<String, (String, String, u32)>,
+    evidence: &mut Vec<Evidence>,
+    claims: &mut Vec<Claim>,
+) {
+    for (derived, (base, symbol_id, rva)) in bases {
         let evidence_id = format!("ev:template-base:{derived}:{base}:{rva:X}");
         evidence.push(Evidence {
             id: evidence_id.clone(),
@@ -177,7 +223,7 @@ pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
             proof_id: None,
         });
         let short = derived.rsplit("::").next().unwrap_or(&derived).to_string();
-        let record = class_records
+        let record = records
             .entry(short.clone())
             .or_insert_with(|| json!({ "name": short }));
         if let Some(object) = record.as_object_mut() {
@@ -191,26 +237,6 @@ pub fn recover_reflection(db: &mut Database, _pe_bytes: &[u8]) -> Result<()> {
             });
         }
     }
-
-    db.properties = all_props;
-    db.classes = class_records.into_values().collect();
-    let property_claims = claims
-        .iter()
-        .filter(|claim| matches!(claim.subject, ClaimSubject::Property { .. }))
-        .count();
-    let base_claims = claims.len().saturating_sub(property_claims);
-    db.evidence.extend(evidence);
-    db.claims.extend(claims);
-    db.capabilities.push(Capability {
-        id: "msvc-reflection".into(),
-        status: CapabilityStatus::Partial,
-        analyzer: "reflection".into(),
-        reason: format!(
-            "{property_claims} properties observed; {base_claims} template base candidates have no proven offsets"
-        ),
-    });
-
-    Ok(())
 }
 
 fn clean_type_name(value: &str) -> String {

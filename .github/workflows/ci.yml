@@ -52,7 +52,7 @@ jobs:
       run: cargo test --verbose
 
     - name: Rust lint
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic -W clippy::nursery
 
     - name: Go orchestration tests
       run: go test ./...

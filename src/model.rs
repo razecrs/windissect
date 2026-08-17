@@ -1,6 +1,7 @@
 //! Target-independent intermediate representation consumed by every emitter.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
 /// Where a fact came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,17 +63,17 @@ pub enum Type {
         args: Vec<TypeArg>,
     },
     Ptr {
-        to: Box<Type>,
+        to: Box<Self>,
     },
     Ref {
-        to: Box<Type>,
+        to: Box<Self>,
     },
     Const {
-        of: Box<Type>,
+        of: Box<Self>,
     },
     FnPtr {
-        ret: Box<Type>,
-        params: Vec<Type>,
+        ret: Box<Self>,
+        params: Vec<Self>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         callconv: Option<String>,
     },
@@ -166,6 +167,74 @@ pub struct Symbol {
     pub imports: Vec<String>,
 }
 
+/// A declaration imported from a comparison corpus. Candidates are retained
+/// separately from symbols so reference material cannot become callable IR.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferenceCandidate {
+    pub id: String,
+    pub class: String,
+    pub method: String,
+    pub signature: String,
+    pub parameter_count: usize,
+    pub source_file: String,
+    pub source_line: usize,
+    pub evidence_kind: String,
+    #[serde(default)]
+    pub matched_symbol_ids: Vec<String>,
+}
+
+/// A discrepancy-driven recovery task. External declarations can create a job,
+/// but only Windissect evidence and passing proofs can move it to `Verified`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecoveryJob {
+    pub id: String,
+    pub candidate_id: String,
+    pub kind: RecoveryJobKind,
+    pub state: RecoveryJobState,
+    pub class: String,
+    pub method: String,
+    pub expected_signature: String,
+    #[serde(default)]
+    pub matched_symbol_ids: Vec<String>,
+    #[serde(default)]
+    pub evidence_requirements: Vec<RecoveryRequirement>,
+    #[serde(default)]
+    pub satisfied_claim_ids: Vec<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryJobKind {
+    MissingDeclaration,
+    DeclarationOnly,
+    InlineDeclaration,
+    PureVirtualDeclaration,
+    SpecialMember,
+    StubDeclaration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryJobState {
+    Unresolved,
+    Candidate,
+    Verified,
+    Withheld,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RecoveryRequirement {
+    SymbolIdentity,
+    ExactSignature,
+    Addressability,
+    CallingConvention,
+    ExecutableMapping,
+    TypeOrCallsiteEvidence,
+    VtableSlot,
+}
+
 /// Identity of the exact binary an IR was built from (version-diff anchor).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BinaryInfo {
@@ -184,6 +253,8 @@ pub struct BinaryInfo {
     pub machine: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_base: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_size: Option<u64>,
 }
 
 /// A stable reference to bytes/instructions supporting an analysis fact.
@@ -255,6 +326,11 @@ pub enum EvidenceObservation {
         size: u64,
         vftable: u64,
     },
+    AllocationConstructor {
+        owner: String,
+        size: u64,
+        constructor: u64,
+    },
     ReflectionProperty {
         owner: String,
         name: String,
@@ -296,7 +372,17 @@ pub enum ClaimSubject {
         offset: u64,
         width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        bit_offset: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bit_size: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        type_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        /// Proven object-relative storage that is not necessarily a distinct
+        /// source-level C++ member declaration.
+        #[serde(default)]
+        structural_only: bool,
         access: String,
     },
     ObjectSize {
@@ -322,6 +408,8 @@ pub enum ClaimSubject {
     VtableSlot {
         owner: String,
         table_rva: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        table_object_offset: Option<i64>,
         slot: u32,
         target_rva: u32,
     },
@@ -425,6 +513,134 @@ pub struct FunctionAnalysis {
     pub cfg_edges: Vec<ControlFlowEdge>,
 }
 
+/// Proof-gated, emitter-ready semantic view derived from the observation graph.
+/// The proof graph remains authoritative; these records only index claims in a
+/// form that C++/Rust emitters can consume deterministically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SemanticModel {
+    #[serde(default)]
+    pub classes: Vec<SemanticClass>,
+    #[serde(default)]
+    pub enums: Vec<SemanticEnum>,
+    #[serde(default)]
+    pub aliases: Vec<SemanticAlias>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SemanticStatus {
+    Verified,
+    Candidate,
+    Withheld,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticClass {
+    pub qualified_name: String,
+    #[serde(default = "default_semantic_kind")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alignment: Option<u32>,
+    pub status: SemanticStatus,
+    #[serde(default)]
+    pub fields: Vec<SemanticField>,
+    #[serde(default)]
+    pub bases: Vec<SemanticBase>,
+    #[serde(default)]
+    pub vtables: Vec<SemanticVtable>,
+    #[serde(default)]
+    pub claim_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticField {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub offset: u64,
+    pub width: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bit_offset: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bit_size: Option<u8>,
+    #[serde(default)]
+    pub structural_only: bool,
+    pub status: SemanticStatus,
+    pub claim_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticBase {
+    pub qualified_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<i64>,
+    pub is_virtual: bool,
+    pub status: SemanticStatus,
+    #[serde(default)]
+    pub relationship_verified: bool,
+    #[serde(default)]
+    pub offset_verified: bool,
+    pub claim_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticVtable {
+    pub rva: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub object_offset: Option<i64>,
+    pub status: SemanticStatus,
+    #[serde(default)]
+    pub slots: Vec<SemanticVtableSlot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticVtableSlot {
+    pub slot: u32,
+    pub target_rva: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub this_adjustment: Option<i32>,
+    pub status: SemanticStatus,
+    pub claim_ids: Vec<String>,
+}
+
+fn default_semantic_kind() -> String {
+    "class".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticEnum {
+    pub qualified_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub underlying_type: Option<String>,
+    pub status: SemanticStatus,
+    pub values: Vec<SemanticEnumValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticEnumValue {
+    pub name: String,
+    pub value: i64,
+    pub status: SemanticStatus,
+    pub claim_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticAlias {
+    pub name: String,
+    pub target: String,
+    pub status: SemanticStatus,
+    pub claim_ids: Vec<String>,
+}
+
 /// The serialized IR. Reserved sections are shaped now for later passes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Database {
@@ -461,9 +677,96 @@ pub struct Database {
     pub capabilities: Vec<Capability>,
     #[serde(default)]
     pub functions: Vec<FunctionAnalysis>,
+    /// Schema-v3 typed semantic projection. Facts remain proof-gated by their
+    /// referenced claim IDs and never become verified through migration.
+    #[serde(default)]
+    pub semantic: SemanticModel,
+    /// Reference-corpus declarations retained as non-callable candidates.
+    #[serde(default)]
+    pub reference_candidates: Vec<ReferenceCandidate>,
+    /// Refine-mode work queue derived from comparison discrepancies. Jobs are
+    /// safe to persist because their verification state is recomputed solely
+    /// from the IR proof graph.
+    #[serde(default)]
+    pub recovery_jobs: Vec<RecoveryJob>,
+    /// Lossless-ish inventory of PDB symbol-stream records not yet projected
+    /// into a dedicated typed section. Records retain module, kind, name, and
+    /// address/size when the PDB exposes them.
+    #[serde(default)]
+    pub pdb_records: Vec<serde_json::Value>,
 }
 
 impl Database {
+    /// Index every claim that currently satisfies the proof graph. Bulk
+    /// consumers should build this once instead of repeatedly rescanning all
+    /// evidence, proofs, and conflicts.
+    pub fn proven_claim_ids(&self) -> BTreeSet<&str> {
+        let evidence_ids: BTreeSet<&str> = self
+            .evidence
+            .iter()
+            .map(|evidence| evidence.id.as_str())
+            .collect();
+        let passed_proof_ids: BTreeSet<&str> = self
+            .proofs
+            .iter()
+            .filter(|proof| {
+                proof.passed
+                    && proof
+                        .obligations
+                        .iter()
+                        .all(|obligation| obligation.satisfied)
+            })
+            .map(|proof| proof.id.as_str())
+            .collect();
+        let conflicted_claim_ids: BTreeSet<&str> = self
+            .conflicts
+            .iter()
+            .filter(|conflict| !conflict.resolved)
+            .flat_map(|conflict| conflict.claim_ids.iter().map(String::as_str))
+            .collect();
+        self.claims
+            .iter()
+            .filter(|claim| {
+                claim.usability == Usability::Verified
+                    && !claim.evidence_ids.is_empty()
+                    && claim
+                        .evidence_ids
+                        .iter()
+                        .all(|id| evidence_ids.contains(id.as_str()))
+                    && claim
+                        .proof_id
+                        .as_deref()
+                        .is_some_and(|id| passed_proof_ids.contains(id))
+                    && !conflicted_claim_ids.contains(claim.id.as_str())
+            })
+            .map(|claim| claim.id.as_str())
+            .collect()
+    }
+
+    /// All symbol IDs with independently proven addressability and signature
+    /// claims.
+    pub fn verified_callable_symbol_ids(&self) -> BTreeSet<&str> {
+        let proven = self.proven_claim_ids();
+        let mut callable = BTreeSet::new();
+        let mut signatures = BTreeSet::new();
+        for claim in self
+            .claims
+            .iter()
+            .filter(|claim| proven.contains(claim.id.as_str()))
+        {
+            match &claim.subject {
+                ClaimSubject::Callable { symbol_id, .. } => {
+                    callable.insert(symbol_id.as_str());
+                }
+                ClaimSubject::Signature { symbol_id, .. } => {
+                    signatures.insert(symbol_id.as_str());
+                }
+                _ => {}
+            }
+        }
+        callable.intersection(&signatures).copied().collect()
+    }
+
     /// A verified label is valid only when the claim is backed by recorded
     /// evidence, a passing proof, and no unresolved conflict.
     pub fn claim_is_proven(&self, claim: &Claim) -> bool {
@@ -504,16 +807,24 @@ impl Database {
         callable && signature
     }
 
-    pub fn vtable_slot_is_verified(&self, table_rva: u32, slot: u32, target_rva: u32) -> bool {
+    pub fn vtable_slot_is_verified(
+        &self,
+        owner: &str,
+        table_rva: u32,
+        table_object_offset: Option<i64>,
+        slot: u32,
+        target_rva: u32,
+    ) -> bool {
         self.claims.iter().any(|claim| {
             matches!(
                 claim.subject,
                 ClaimSubject::VtableSlot {
                     table_rva: table,
+                    table_object_offset: claim_offset,
                     slot: index,
                     target_rva: target,
-                    ..
-                } if table == table_rva && index == slot && target == target_rva
+                    owner: ref claim_owner,
+                } if claim_owner == owner && table == table_rva && claim_offset == table_object_offset && index == slot && target == target_rva
             ) && self.claim_is_proven(claim)
         })
     }
@@ -533,11 +844,20 @@ impl Database {
             });
             self.schema = 2;
         }
+        if self.schema < 3 {
+            self.capabilities.push(Capability {
+                id: "schema-v3-semantic-projection".into(),
+                status: CapabilityStatus::Partial,
+                analyzer: "schema-migration".into(),
+                reason: "semantic projection is empty until refine --semantic is run".into(),
+            });
+            self.schema = 3;
+        }
         self
     }
 }
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 #[cfg(test)]
 mod tests {

@@ -50,7 +50,7 @@ pub struct RecordResult {
     pub directory: PathBuf,
 }
 
-pub fn record(db: &Database, root: &Path) -> Result<RecordResult> {
+pub fn record(db: &Database, root: &Path, source_ir: Option<&Path>) -> Result<RecordResult> {
     let target = target_stem(&db.binary.file);
     let key = build_key(db);
     let target_dir = root.join(&target);
@@ -70,7 +70,7 @@ pub fn record(db: &Database, root: &Path) -> Result<RecordResult> {
     };
 
     let previous = index.latest.clone().filter(|old| old != &key);
-    diff::atomic_write(&ir_path, &serde_json::to_vec_pretty(db)?)?;
+    archive_ir(db, source_ir, &ir_path)?;
 
     let (normalized_guid, normalized_age) = pdb_identity(db);
     let mut entry = BuildEntry {
@@ -117,6 +117,21 @@ pub fn record(db: &Database, root: &Path) -> Result<RecordResult> {
     })
 }
 
+fn archive_ir(db: &Database, source_ir: Option<&Path>, destination: &Path) -> Result<()> {
+    if let Some(source) = source_ir {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if destination.exists() {
+            std::fs::remove_file(destination)?;
+        }
+        if std::fs::hard_link(source, destination).is_ok() {
+            return Ok(());
+        }
+    }
+    diff::atomic_write(destination, &serde_json::to_vec(db)?)
+}
+
 fn update_catalog(root: &Path, target: &str, index: &HistoryIndex) -> Result<()> {
     let path = root.join("index.json");
     let mut catalog: HistoryCatalog = if path.exists() {
@@ -142,9 +157,7 @@ fn update_catalog(root: &Path, target: &str, index: &HistoryIndex) -> Result<()>
 fn build_key(db: &Database) -> String {
     let (guid, age_value) = pdb_identity(db);
     let guid = guid.as_deref().unwrap_or("no-pdb");
-    let age = age_value
-        .map(|v| format!("{v:X}"))
-        .unwrap_or_else(|| "0".into());
+    let age = age_value.map_or_else(|| "0".into(), |v| format!("{v:X}"));
     let timestamp = db.binary.timestamp.as_deref().unwrap_or("unknown-time");
     safe(&format!("{timestamp}-{guid}-{age}"))
 }
@@ -196,13 +209,13 @@ mod tests {
         let mut db = Database::default();
         db.binary.file = "history-test.dll".into();
         db.binary.timestamp = Some(timestamp.into());
-        db.binary.pdb_guid = Some(format!("{:0<32}", timestamp));
+        db.binary.pdb_guid = Some(format!("{timestamp:0<32}"));
         db.binary.pdb_age = Some(1);
         db.symbols.push(Symbol {
             id: "fn".into(),
             mangled: "fn".into(),
             demangled: Some("fn".into()),
-            vaddr: 0x180001000,
+            vaddr: 0x0001_8000_1000,
             rva: 0x1000,
             ordinal: Some(1),
             size: 1,
@@ -228,9 +241,9 @@ mod tests {
     fn archives_builds_and_writes_adjacent_diff() {
         let root = std::env::temp_dir().join(format!("windissect-history-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        let first = record(&database("1", "aaa"), &root).unwrap();
+        let first = record(&database("1", "aaa"), &root, None).unwrap();
         assert!(first.previous.is_none());
-        let second = record(&database("2", "bbb"), &root).unwrap();
+        let second = record(&database("2", "bbb"), &root, None).unwrap();
         assert!(second.previous.is_some());
         let index: HistoryIndex =
             serde_json::from_slice(&std::fs::read(root.join("history-test/index.json")).unwrap())

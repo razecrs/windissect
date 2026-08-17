@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -12,8 +13,10 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -61,6 +64,55 @@ var targetDLLs = []string{
 	"SystemSettings.View.dll",
 	"Taskmgr.dll",
 }
+
+type targetSpec struct {
+	ID       string `json:"id"`
+	File     string `json:"file"`
+	Source   string `json:"source"`
+	Area     string `json:"area"`
+	Required bool   `json:"required"`
+}
+
+type corpusManifest struct {
+	Schema  int          `json:"schema"`
+	Targets []targetSpec `json:"targets"`
+}
+
+type processOutcome struct {
+	IRPath  string
+	PDBUsed bool
+}
+
+type corpusResult struct {
+	ID         string `json:"id"`
+	File       string `json:"file"`
+	Area       string `json:"area,omitempty"`
+	Required   bool   `json:"required"`
+	SourcePath string `json:"source_path,omitempty"`
+	Status     string `json:"status"`
+	SHA256     string `json:"sha256,omitempty"`
+	PDBName    string `json:"pdb_name,omitempty"`
+	PDBGuid    string `json:"pdb_guid,omitempty"`
+	PDBAge     uint32 `json:"pdb_age,omitempty"`
+	PDBUsed    bool   `json:"pdb_used"`
+	IR         string `json:"ir,omitempty"`
+	Headers    string `json:"headers,omitempty"`
+	Rust       string `json:"rust,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
+
+type corpusIndex struct {
+	Schema        int            `json:"schema"`
+	GeneratedUTC  string         `json:"generated_utc"`
+	WindowsBuild  string         `json:"windows_build"`
+	Architecture  string         `json:"architecture"`
+	ExtractorPath string         `json:"extractor_path"`
+	ExtractorHash string         `json:"extractor_sha256"`
+	Targets       []corpusResult `json:"targets"`
+}
+
+var buildOnce sync.Once
+var detectedBuild uint32
 
 func swapHex(s string) string {
 	b, err := hex.DecodeString(s)
@@ -200,42 +252,206 @@ func findExtractor(baseDir string) string {
 	return ""
 }
 
-func processDLL(dllName string, system32Dir, probeDir, irDir, exePath string) error {
-	dllPath := filepath.Join(system32Dir, dllName)
-	if filepath.IsAbs(dllName) || strings.ContainsAny(dllName, `/\\`) {
-		dllPath = dllName
+func takeOption(args []string, name string) ([]string, string, error) {
+	for i := 0; i < len(args); i++ {
+		if args[i] != name {
+			continue
+		}
+		if i+1 >= len(args) {
+			return nil, "", fmt.Errorf("%s requires a value", name)
+		}
+		value := args[i+1]
+		return append(args[:i], args[i+2:]...), value, nil
 	}
-	if _, err := os.Stat(dllPath); os.IsNotExist(err) {
-		dllPath = filepath.Join(probeDir, dllName)
-		if _, err := os.Stat(dllPath); os.IsNotExist(err) {
-			fmt.Printf("[?] Skipping %s: not found in System32 or probe/\n", dllName)
-			return fmt.Errorf("DLL not found")
+	return args, "", nil
+}
+
+func loadManifest(name string) ([]targetSpec, error) {
+	b, err := os.ReadFile(name)
+	if err != nil {
+		return nil, err
+	}
+	var manifest corpusManifest
+	if err := json.Unmarshal(b, &manifest); err != nil {
+		return nil, err
+	}
+	if manifest.Schema != 1 {
+		return nil, fmt.Errorf("unsupported corpus manifest schema %d", manifest.Schema)
+	}
+	seen := map[string]bool{}
+	for i := range manifest.Targets {
+		target := &manifest.Targets[i]
+		if target.ID == "" || target.File == "" {
+			return nil, fmt.Errorf("manifest target %d requires id and file", i)
+		}
+		if seen[target.ID] {
+			return nil, fmt.Errorf("duplicate manifest target id %q", target.ID)
+		}
+		seen[target.ID] = true
+	}
+	return manifest.Targets, nil
+}
+
+func newestFile(patterns ...string) string {
+	var matches []string
+	for _, pattern := range patterns {
+		found, _ := filepath.Glob(pattern)
+		matches = append(matches, found...)
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		left, leftErr := os.Stat(matches[i])
+		right, rightErr := os.Stat(matches[j])
+		if leftErr == nil && rightErr == nil && !left.ModTime().Equal(right.ModTime()) {
+			return left.ModTime().After(right.ModTime())
+		}
+		return matches[i] > matches[j]
+	})
+	for _, match := range matches {
+		if info, err := os.Stat(match); err == nil && !info.IsDir() {
+			return match
 		}
 	}
+	return ""
+}
 
+func newestPackageFile(root, packagePattern string, relativeParts ...string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	var candidates []string
+	for _, entry := range entries {
+		if !packageNameMatches(entry.Name(), packagePattern) {
+			continue
+		}
+		parts := append([]string{root, entry.Name()}, relativeParts...)
+		candidate := filepath.Join(parts...)
+		if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	patterns := make([]string, len(candidates))
+	copy(patterns, candidates)
+	return newestFile(patterns...)
+}
+
+func packageNameMatches(name, pattern string) bool {
+	prefix, suffix, found := strings.Cut(pattern, "*")
+	if found && !strings.Contains(suffix, "*") {
+		return strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix)
+	}
+	matched, err := filepath.Match(pattern, name)
+	return err == nil && matched
+}
+
+func installedNotepadFile(relativeParts ...string) string {
+	command := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-Command",
+		"(Get-AppxPackage -Name Microsoft.WindowsNotepad | Sort-Object Version -Descending | Select-Object -First 1).InstallLocation",
+	)
+	output, err := command.Output()
+	if err != nil {
+		return ""
+	}
+	location := strings.TrimSpace(string(output))
+	if location == "" {
+		return ""
+	}
+	parts := append([]string{location}, relativeParts...)
+	candidate := filepath.Join(parts...)
+	if info, statErr := os.Stat(candidate); statErr == nil && !info.IsDir() {
+		return candidate
+	}
+	return ""
+}
+
+func resolveTargetPath(target targetSpec, windowsDir, probeDir string) string {
+	if filepath.IsAbs(target.File) || strings.ContainsAny(target.File, `/\`) {
+		if info, err := os.Stat(target.File); err == nil && !info.IsDir() {
+			return target.File
+		}
+		return ""
+	}
+	system32 := filepath.Join(windowsDir, "System32", target.File)
+	switch target.Source {
+	case "", "system32":
+		if info, err := os.Stat(system32); err == nil && !info.IsDir() {
+			return system32
+		}
+	case "windows":
+		candidate := filepath.Join(windowsDir, target.File)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	case "start-menu-system-app":
+		candidate := filepath.Join(windowsDir, "SystemApps", "Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy", target.File)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	case "windows-app-runtime-x64":
+		programFiles := os.Getenv("ProgramFiles")
+		return newestFile(
+			filepath.Join(programFiles, "WindowsApps", "Microsoft.WindowsAppRuntime.*_*_x64__8wekyb3d8bbwe", target.File),
+			filepath.Join(windowsDir, "SystemApps", "Microsoft.WindowsAppRuntime.CBS*_8wekyb3d8bbwe", target.File),
+		)
+	case "notepad-app-x64":
+		programFiles := os.Getenv("ProgramFiles")
+		candidate := newestPackageFile(
+			filepath.Join(programFiles, "WindowsApps"),
+			"Microsoft.WindowsNotepad_*_x64__8wekyb3d8bbwe",
+			"Notepad",
+			target.File,
+		)
+		if candidate != "" {
+			return candidate
+		}
+		return installedNotepadFile("Notepad", target.File)
+	default:
+		return ""
+	}
+	probe := filepath.Join(probeDir, target.File)
+	if info, err := os.Stat(probe); err == nil && !info.IsDir() {
+		return probe
+	}
+	return ""
+}
+
+func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutcome, error) {
+	if _, err := os.Stat(dllPath); err != nil {
+		return processOutcome{}, err
+	}
+	dllName := filepath.Base(dllPath)
 	fmt.Println("\n==========================================")
 	fmt.Printf("[*] Target: %s (%s)\n", dllName, dllPath)
 	fmt.Println("==========================================")
 
-	stem := strings.TrimSuffix(filepath.Base(dllName), filepath.Ext(dllName))
+	stem := outputID
+	if stem == "" {
+		stem = strings.TrimSuffix(dllName, filepath.Ext(dllName))
+	}
 	irOut := filepath.Join(irDir, stem+".json")
 
 	work, err := os.MkdirTemp("", "windissect-")
 	if err != nil {
-		return err
+		return processOutcome{}, err
 	}
 	defer os.RemoveAll(work)
 	pass1 := filepath.Join(work, "pass1.json")
 	cmd1 := exec.Command(exePath, "extract", dllPath, "--out", pass1)
 	cmd1.Dir = work
 	if out, err := cmd1.CombinedOutput(); err != nil {
-		return fmt.Errorf("pass 1 failed: %w: %s", err, out)
+		return processOutcome{}, fmt.Errorf("pass 1 failed: %w: %s", err, out)
 	}
 
 	irData, err := os.ReadFile(pass1)
 	if err != nil {
 		fmt.Printf("[!] Pass 1 failed to generate IR for %s\n", dllName)
-		return err
+		return processOutcome{}, err
 	}
 
 	var parsed struct {
@@ -247,12 +463,12 @@ func processDLL(dllName string, system32Dir, probeDir, irDir, exePath string) er
 	}
 	if err := json.Unmarshal(irData, &parsed); err != nil {
 		fmt.Printf("[!] Failed to parse IR JSON: %v\n", err)
-		return err
+		return processOutcome{}, err
 	}
 
 	pdbName, err := safePDBName(parsed.Binary.PdbName)
 	if err != nil && parsed.Binary.PdbName != "" {
-		return err
+		return processOutcome{}, err
 	}
 	rawGuid := parsed.Binary.PdbGuid
 	fmt.Printf("[+] PE Metadata: PDB='%s', Raw GUID='%s'\n", pdbName, rawGuid)
@@ -261,7 +477,7 @@ func processDLL(dllName string, system32Dir, probeDir, irDir, exePath string) er
 	if pdbName != "" && rawGuid != "" {
 		key := symbolKey(rawGuid, parsed.Binary.PdbAge)
 		if key == "" {
-			return fmt.Errorf("invalid PDB GUID+age")
+			return processOutcome{}, fmt.Errorf("invalid PDB GUID+age")
 		}
 		targetPdbPath := filepath.Join(probeDir, "symbols", pdbName, key, pdbName)
 		if err := validatePDB(targetPdbPath); err == nil {
@@ -283,25 +499,38 @@ func processDLL(dllName string, system32Dir, probeDir, irDir, exePath string) er
 
 	cmd2 := exec.Command(exePath, args...)
 	cmd2.Dir = work
-	output, err := cmd2.CombinedOutput()
-	fmt.Println(string(output))
+	output, err := runStreaming(cmd2)
 	if err != nil {
-		return fmt.Errorf("pass 2 failed: %w", err)
+		return processOutcome{}, fmt.Errorf("pass 2 failed: %w: %s", err, output)
 	}
 	if b, err := os.ReadFile(final); err != nil || !json.Valid(b) {
-		return fmt.Errorf("pass 2 produced invalid IR")
+		return processOutcome{}, fmt.Errorf("pass 2 produced invalid IR")
+	}
+	verify := exec.Command(exePath, "verify", "--ir", final)
+	verify.Dir = work
+	if output, err := verify.CombinedOutput(); err != nil {
+		return processOutcome{}, fmt.Errorf("verification failed: %w: %s", err, output)
 	}
 	if err := replaceFile(final, irOut); err != nil {
-		return err
+		return processOutcome{}, err
 	}
 	record := exec.Command(exePath, "record-build", irOut, "--history", filepath.Join(filepath.Dir(irDir), "history"))
 	record.Dir = filepath.Dir(irDir)
 	if output, err := record.CombinedOutput(); err != nil {
-		return fmt.Errorf("record build failed: %w: %s", err, output)
+		return processOutcome{}, fmt.Errorf("record build failed: %w: %s", err, output)
 	} else {
 		fmt.Print(string(output))
 	}
-	return nil
+	return processOutcome{IRPath: irOut, PDBUsed: pdbPath != ""}, nil
+}
+
+func runStreaming(command *exec.Cmd) ([]byte, error) {
+	var captured bytes.Buffer
+	output := io.MultiWriter(os.Stdout, &captured)
+	command.Stdout = output
+	command.Stderr = output
+	err := command.Run()
+	return captured.Bytes(), err
 }
 
 // replaceFile installs a verified result while preserving the previous file
@@ -323,10 +552,16 @@ func replaceFile(source, destination string) error {
 	return nil
 }
 
-func emitAllHeaders(baseDir, exePath string) error {
+func emitAllOutputs(baseDir, exePath string) error {
 	irDir := filepath.Join(baseDir, "ir")
 	headersDir := filepath.Join(baseDir, "headers")
-	_ = os.MkdirAll(headersDir, 0755)
+	rustDir := filepath.Join(baseDir, "rust")
+	if err := os.MkdirAll(headersDir, 0755); err != nil {
+		return fmt.Errorf("create header output: %w", err)
+	}
+	if err := os.MkdirAll(rustDir, 0755); err != nil {
+		return fmt.Errorf("create Rust output: %w", err)
+	}
 
 	entries, err := os.ReadDir(irDir)
 	if err != nil {
@@ -334,7 +569,7 @@ func emitAllHeaders(baseDir, exePath string) error {
 		return err
 	}
 
-	fmt.Printf("[*] Emitting C headers for %d IR databases into headers/\n", len(entries))
+	fmt.Printf("[*] Emitting C/C++ and Rust outputs for %d IR databases\n", len(entries))
 	for _, entry := range entries {
 		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
 			stem := strings.TrimSuffix(entry.Name(), ".json")
@@ -342,15 +577,258 @@ func emitAllHeaders(baseDir, exePath string) error {
 			outDir := filepath.Join(headersDir, stem)
 			fmt.Printf("[*] Emitting headers for %s -> %s\n", entry.Name(), outDir)
 
+			verify := exec.Command(exePath, "verify", "--ir", irFile)
+			if out, err := verify.CombinedOutput(); err != nil {
+				return fmt.Errorf("verify %s: %w: %s", entry.Name(), err, out)
+			}
 			cmd := exec.Command(exePath, "emit-headers", "--ir", irFile, "--out", outDir)
 			out, err := cmd.CombinedOutput()
 			fmt.Println(string(out))
 			if err != nil {
 				return fmt.Errorf("emit %s: %w", entry.Name(), err)
 			}
+			rustOut := filepath.Join(rustDir, stem)
+			cmd = exec.Command(exePath, "emit-rust", "--ir", irFile, "--out", rustOut)
+			out, err = cmd.CombinedOutput()
+			fmt.Println(string(out))
+			if err != nil {
+				return fmt.Errorf("emit Rust %s: %w", entry.Name(), err)
+			}
 		}
 	}
 	return nil
+}
+
+func defaultTargets() []targetSpec {
+	targets := make([]targetSpec, 0, len(targetDLLs))
+	for _, file := range targetDLLs {
+		targets = append(targets, targetSpec{
+			ID:       strings.TrimSuffix(file, filepath.Ext(file)),
+			File:     file,
+			Source:   "system32",
+			Required: true,
+		})
+	}
+	return targets
+}
+
+func resultMetadata(result *corpusResult) {
+	b, err := os.ReadFile(result.IR)
+	if err != nil {
+		return
+	}
+	var ir struct {
+		Binary struct {
+			SHA256  string `json:"sha256"`
+			PDBName string `json:"pdb_name"`
+			PDBGuid string `json:"pdb_guid"`
+			PDBAge  uint32 `json:"pdb_age"`
+		} `json:"binary"`
+	}
+	if json.Unmarshal(b, &ir) == nil {
+		result.SHA256 = ir.Binary.SHA256
+		result.PDBName = ir.Binary.PDBName
+		result.PDBGuid = ir.Binary.PDBGuid
+		result.PDBAge = ir.Binary.PDBAge
+	}
+}
+
+func writeCorpusIndex(root, extractorPath string, results []corpusResult) error {
+	results = mergeCorpusResults(root, results)
+	extractorHash, _ := fileSHA256(extractorPath)
+	index := corpusIndex{
+		Schema:        1,
+		GeneratedUTC:  time.Now().UTC().Format(time.RFC3339Nano),
+		WindowsBuild:  strings.TrimSpace(os.Getenv("OS_BUILD_NUMBER")),
+		Architecture:  os.Getenv("PROCESSOR_ARCHITECTURE"),
+		ExtractorPath: extractorPath,
+		ExtractorHash: extractorHash,
+		Targets:       results,
+	}
+	if index.WindowsBuild == "" {
+		index.WindowsBuild = fmt.Sprintf("%d.%d.%d", 10, 0, windowsBuild())
+	}
+	b, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return err
+	}
+	temporary := filepath.Join(root, "compat-index.json.tmp")
+	final := filepath.Join(root, "compat-index.json")
+	if err := os.WriteFile(temporary, b, 0o644); err != nil {
+		return err
+	}
+	if err := replaceFile(temporary, final); err != nil {
+		return err
+	}
+	return writeCorpusReport(root, index)
+}
+
+func writeCorpusReport(root string, index corpusIndex) error {
+	counts := make(map[string]int)
+	for _, target := range index.Targets {
+		counts[target.Status]++
+	}
+	var report strings.Builder
+	fmt.Fprintf(&report, "# Windissect compatibility corpus\n\n")
+	fmt.Fprintf(&report, "Generated: `%s`  \n", index.GeneratedUTC)
+	fmt.Fprintf(&report, "Windows build: `%s`  \n", index.WindowsBuild)
+	fmt.Fprintf(&report, "Architecture: `%s`  \n", index.Architecture)
+	fmt.Fprintf(&report, "Extractor SHA-256: `%s`\n\n", index.ExtractorHash)
+	fmt.Fprintf(&report, "- Exact-build PDB verified: %d\n", counts["verified-pdb"])
+	fmt.Fprintf(&report, "- Static-only verified: %d\n", counts["verified-static"])
+	fmt.Fprintf(&report, "- Required failures: %d\n", counts["failed-required"])
+	fmt.Fprintf(&report, "- Optional failures/unavailable: %d\n\n", counts["failed-optional"]+counts["unavailable-optional"])
+	report.WriteString("| Target | Binary | Status | PDB identity | Binary SHA-256 |\n")
+	report.WriteString("|---|---|---|---|---|\n")
+	for _, target := range index.Targets {
+		pdbIdentity := "—"
+		if target.PDBGuid != "" {
+			pdbIdentity = fmt.Sprintf("`%s+%X`", target.PDBGuid, target.PDBAge)
+		}
+		sha := "—"
+		if target.SHA256 != "" {
+			sha = "`" + target.SHA256 + "`"
+		}
+		fmt.Fprintf(
+			&report,
+			"| `%s` | `%s` | `%s` | %s | %s |\n",
+			target.ID,
+			target.File,
+			target.Status,
+			pdbIdentity,
+			sha,
+		)
+	}
+	temporary := filepath.Join(root, "compat-report.md.tmp")
+	final := filepath.Join(root, "compat-report.md")
+	if err := os.WriteFile(temporary, []byte(report.String()), 0o644); err != nil {
+		return err
+	}
+	return replaceFile(temporary, final)
+}
+
+func readCorpusIndex(root string) corpusIndex {
+	b, err := os.ReadFile(filepath.Join(root, "compat-index.json"))
+	if err != nil {
+		return corpusIndex{}
+	}
+	var index corpusIndex
+	if json.Unmarshal(b, &index) != nil || index.Schema != 1 {
+		return corpusIndex{}
+	}
+	return index
+}
+
+func mergeCorpusResults(root string, updates []corpusResult) []corpusResult {
+	existing := readCorpusIndex(root).Targets
+	positions := make(map[string]int, len(existing))
+	for i := range existing {
+		positions[existing[i].ID] = i
+	}
+	for _, update := range updates {
+		if position, ok := positions[update.ID]; ok {
+			existing[position] = update
+		} else {
+			positions[update.ID] = len(existing)
+			existing = append(existing, update)
+		}
+	}
+	return existing
+}
+
+func fileSHA256(name string) (string, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return strings.ToUpper(hex.EncodeToString(hash.Sum(nil))), nil
+}
+
+func windowsBuild() uint32 {
+	buildOnce.Do(func() {
+		command := exec.Command("powershell.exe", "-NoProfile", "-Command", "[Environment]::OSVersion.Version.Build")
+		out, err := command.Output()
+		if err == nil {
+			if build, parseErr := strconv.ParseUint(strings.TrimSpace(string(out)), 10, 32); parseErr == nil {
+				detectedBuild = uint32(build)
+			}
+		}
+	})
+	return detectedBuild
+}
+
+func processTargets(targets []targetSpec, windowsDir, root, extractorPath string) ([]corpusResult, bool) {
+	probeDir := filepath.Join(root, "probe")
+	irDir := filepath.Join(root, "ir")
+	_ = os.MkdirAll(probeDir, 0o755)
+	_ = os.MkdirAll(irDir, 0o755)
+	results := make([]corpusResult, 0, len(targets))
+	prior := make(map[string]corpusResult)
+	for _, result := range readCorpusIndex(root).Targets {
+		prior[result.ID] = result
+	}
+	failed := false
+	for _, target := range targets {
+		result := corpusResult{ID: target.ID, File: target.File, Area: target.Area, Required: target.Required}
+		result.SourcePath = resolveTargetPath(target, windowsDir, probeDir)
+		if result.SourcePath == "" {
+			result.Error = "binary not installed"
+			if target.Required {
+				result.Status = "failed-required"
+				failed = true
+			} else {
+				result.Status = "unavailable-optional"
+			}
+			results = append(results, result)
+			continue
+		}
+		if previous, ok := prior[target.ID]; ok && reusableResult(previous, result.SourcePath) {
+			previous.SourcePath = result.SourcePath
+			previous.Required = target.Required
+			previous.Area = target.Area
+			results = append(results, previous)
+			fmt.Printf("[*] Reusing verified exact-build target %s\n", target.ID)
+			continue
+		}
+		outcome, err := processDLL(result.SourcePath, target.ID, probeDir, irDir, extractorPath)
+		if err != nil {
+			result.Error = err.Error()
+			if target.Required {
+				result.Status = "failed-required"
+				failed = true
+			} else {
+				result.Status = "failed-optional"
+			}
+			fmt.Printf("[!] %s: %v\n", target.ID, err)
+		} else {
+			result.IR = outcome.IRPath
+			result.PDBUsed = outcome.PDBUsed
+			result.Status = "verified-static"
+			if outcome.PDBUsed {
+				result.Status = "verified-pdb"
+			}
+			resultMetadata(&result)
+		}
+		results = append(results, result)
+		_ = writeCorpusIndex(root, extractorPath, results)
+	}
+	return results, failed
+}
+
+func reusableResult(result corpusResult, sourcePath string) bool {
+	if !strings.HasPrefix(result.Status, "verified-") || result.IR == "" || result.SHA256 == "" {
+		return false
+	}
+	if info, err := os.Stat(result.IR); err != nil || info.IsDir() {
+		return false
+	}
+	hash, err := fileSHA256(sourcePath)
+	return err == nil && strings.EqualFold(hash, result.SHA256)
 }
 
 func main() {
@@ -362,16 +840,46 @@ func main() {
 	if _, err := os.Stat(filepath.Join(baseDir, "Cargo.toml")); os.IsNotExist(err) {
 		baseDir, _ = os.Getwd()
 	}
-
-	probeDir := filepath.Join(baseDir, "probe")
-	irDir := filepath.Join(baseDir, "ir")
-	_ = os.MkdirAll(probeDir, 0755)
-	_ = os.MkdirAll(irDir, 0755)
-
+	args := os.Args[1:]
+	args, extractorOption, err := takeOption(args, "--extractor")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	args, rootOption, err := takeOption(args, "--root")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	args, manifestOption, err := takeOption(args, "--manifest")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	args, onlyOption, err := takeOption(args, "--only")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	root := baseDir
+	if rootOption != "" {
+		root, err = filepath.Abs(rootOption)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 	extractorPath := findExtractor(baseDir)
-	if len(os.Args) > 2 && os.Args[1] == "--extractor" {
-		extractorPath = os.Args[2]
-		os.Args = append([]string{os.Args[0]}, os.Args[3:]...)
+	if extractorOption != "" {
+		extractorPath, err = filepath.Abs(extractorOption)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
 	}
 	if extractorPath == "" {
 		fmt.Fprintln(os.Stderr, "[!] extractor not found; use --extractor PATH")
@@ -379,9 +887,9 @@ func main() {
 	}
 	fmt.Printf("[*] windissect standalone Go toolchain initialized.\n")
 	fmt.Printf("[*] Base Dir: %s\n", baseDir)
+	fmt.Printf("[*] Corpus Root: %s\n", root)
 	fmt.Printf("[*] Extractor Binary: %s\n", extractorPath)
 
-	args := os.Args[1:]
 	cmd := "all"
 	if len(args) > 0 {
 		cmd = args[0]
@@ -390,46 +898,86 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[!] unknown command %q\n", cmd)
 		os.Exit(2)
 	}
-	targets := targetDLLs
+	targets := defaultTargets()
+	if manifestOption != "" {
+		targets, err = loadManifest(manifestOption)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[!] manifest: %v\n", err)
+			os.Exit(2)
+		}
+	}
+	if onlyOption != "" {
+		wanted := map[string]bool{}
+		for _, id := range strings.Split(onlyOption, ",") {
+			wanted[strings.TrimSpace(id)] = true
+		}
+		filtered := targets[:0]
+		for _, target := range targets {
+			if wanted[target.ID] {
+				filtered = append(filtered, target)
+				delete(wanted, target.ID)
+			}
+		}
+		if len(wanted) > 0 {
+			var unknown []string
+			for id := range wanted {
+				unknown = append(unknown, id)
+			}
+			sort.Strings(unknown)
+			fmt.Fprintf(os.Stderr, "[!] unknown --only target(s): %s\n", strings.Join(unknown, ", "))
+			os.Exit(2)
+		}
+		targets = filtered
+	}
 	if len(args) > 1 && cmd != "emit" {
-		targets = args[1:]
+		targets = nil
+		for _, file := range args[1:] {
+			targets = append(targets, targetSpec{
+				ID:       strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)),
+				File:     file,
+				Required: true,
+			})
+		}
 	}
 
-	system32Dir := filepath.Join(os.Getenv("SystemRoot"), "System32")
-	if system32Dir == "System32" {
-		system32Dir = "C:\\Windows\\System32"
+	windowsDir := os.Getenv("SystemRoot")
+	if windowsDir == "" {
+		windowsDir = `C:\Windows`
 	}
 
 	switch cmd {
 	case "pull":
-		var failed bool
-		for _, dll := range targets {
-			if err := processDLL(dll, system32Dir, probeDir, irDir, extractorPath); err != nil {
-				fmt.Printf("[!] %s: %v\n", dll, err)
-				failed = true
-			}
+		results, failed := processTargets(targets, windowsDir, root, extractorPath)
+		if err := writeCorpusIndex(root, extractorPath, results); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			failed = true
 		}
 		if failed {
 			os.Exit(1)
 		}
 	case "emit":
-		if err := emitAllHeaders(baseDir, extractorPath); err != nil {
+		if err := emitAllOutputs(root, extractorPath); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 	case "all":
-		var failed bool
-		for _, dll := range targets {
-			if err := processDLL(dll, system32Dir, probeDir, irDir, extractorPath); err != nil {
-				fmt.Printf("[!] %s: %v\n", dll, err)
-				failed = true
+		results, failed := processTargets(targets, windowsDir, root, extractorPath)
+		if err := emitAllOutputs(root, extractorPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			failed = true
+		} else {
+			for i := range results {
+				if results[i].IR != "" {
+					results[i].Headers = filepath.Join(root, "headers", results[i].ID)
+					results[i].Rust = filepath.Join(root, "rust", results[i].ID)
+				}
 			}
 		}
-		if failed {
-			os.Exit(1)
-		}
-		if err := emitAllHeaders(baseDir, extractorPath); err != nil {
+		if err := writeCorpusIndex(root, extractorPath, results); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			failed = true
+		}
+		if failed {
 			os.Exit(1)
 		}
 	}
