@@ -81,6 +81,65 @@ Fix directions:
   route's recovery-plan gap entry entirely for such binaries, rather than
   listing it as an open evidence route that can never close.
 
+### 3. A class's own vtable being 100% verified doesn't get its factory functions verified-callable
+
+`InitProcessPriv`/`InitThread` (bare C exports, PDB-public-symbol-only,
+no type info) and `Button::Create`/`TouchButton::Create`/etc. (real
+`Class::Create(Element*, DWORD*, Element**)` static factories, PDB-certain
+mangled signatures) never appear in the `claims` array at all -- not
+"attempted and rejected," just never reached by the callable-proof pass.
+This is true even for `Button::Create` specifically, whose target class
+(`DirectUI::Button`) has a **fully verified** vtable (47/47 slots). A
+class clearing 100% verified-slot status says nothing about whether the
+free functions/static factories that construct it get proven callable;
+those appear to be handled by an entirely separate pass that didn't run
+on any of these five functions in this build.
+
+Reproduced on `dui70.dll` (build F1920C0ED3DE254FE969E8E8CC4435CE-1):
+searched the full `claims` array (19,137 entries) in
+`recon-go/ir/dui70.pgressive.json/inventory.ir.json` for any claim
+mentioning `InitProcessPriv`'s RVA (`0x81ff0`) or `Button::Create`'s
+mangled name/RVA (`0x77c30`) -- zero matches for either. Both functions
+were confirmed to actually work by manual, live, SEH-wrapped calls
+outside windissect (see `venir-dui`'s `docs/dui-evidence.md`), not by
+anything windissect itself proved.
+
+Two different shapes of the same gap:
+- `InitProcessPriv`/`InitThread` are bare C exports with no PDB type
+  info at all (`sig.parse_ok: false`, `params: []`) -- their real
+  argument shapes (5 args / 1 arg, both integer/pointer, confirmed by
+  reading their own disassembly) aren't in any evidence windissect
+  produces, static or dynamic. Nothing to promote to verified without
+  new evidence-gathering (disassembly-derived argument recovery for
+  PDB-public-only C exports), not a wiring bug.
+- `Button::Create` has a full, real, structured C++ signature from the
+  PDB (`?Create@Button@DirectUI@@SAJPEAVElement@2@PEAKPEAPEAV32@@Z`
+  demangles cleanly) and its own target class is fully verified -- this
+  one looks like it should be reachable by whatever pass proves
+  `HWNDElement::Create`/`NativeHWNDHost`'s methods callable, but wasn't
+  attempted at all for this build. Worth checking whether the
+  callable-proof pass has its own separate target-selection logic that
+  simply never queued this specific function, versus a real per-function
+  failure that produced a conflict/rejected claim instead of an
+  affirmative one (none of either was found -- it's absent, not
+  rejected).
+
+Fix directions:
+- For the `Button::Create`-shaped case: instrument or trace why a
+  function with a full structured signature and a fully-verified target
+  class type doesn't get queued by the callable-proof pass, when
+  `HWNDElement::Create` (structurally similar: a static factory taking
+  an output pointer, real PDB signature) did get queued and proven for
+  the same binary.
+- For the `InitProcessPriv`-shaped case: this needs new evidence, not a
+  wiring fix -- consider whether disassembly-derived argument-count/type
+  inference (register/stack read patterns at function entry, already
+  partially explored manually for both these functions) could feed a new
+  evidence route for PDB-public-only C exports, similar in spirit to how
+  `ProbeOperation::CallEnumProbe` (see "Fixed this session" below) added
+  a new evidence route for enum values that plain PDB parsing couldn't
+  supply.
+
 ## Fixed this session
 
 - ~~Enum member values not recoverable when the PDB only carries a forward
