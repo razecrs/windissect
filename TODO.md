@@ -45,22 +45,41 @@ F1920C0ED3DE254FE969E8E8CC4435CE-1): `DirectUI::HWNDElement` has all 3 of
 its own vtables fully verified (every slot proven), but stays `candidate`
 solely because `HWNDElement -> DirectUI::ElementWithHWND` has
 `relationship_verified: false`. Same pattern on `DirectUI::HWNDHost ->
-DirectUI::ElementWithHWND`. The recovery plan already names the right
-evidence routes for this (`pdb-base-record`, `rtti-base-descriptor`,
-`constructor-vtable-chain`) but none fired for either relationship in this
-build.
+DirectUI::ElementWithHWND`. The recovery plan names three evidence routes
+for this (`pdb-base-record`, `rtti-base-descriptor`,
+`constructor-vtable-chain`) -- two of the three are confirmed, verified
+dead ends for this specific binary, not just "didn't fire this run":
+
+- `rtti-base-descriptor`: dui70.dll has no RTTI at all. Confirmed with
+  radare2's `avrr` (automatic RTTI vtable recovery), which found zero
+  classes in the whole binary -- consistent with an older system DLL
+  compiled with `/GR-`.
+- `constructor-vtable-chain`: checked `HWNDElement`'s actual disassembly
+  (RVA 0x7d180). It never calls `ElementWithHWND`'s constructor at all --
+  the compiler fully inlined the base construction (set the vtable
+  pointer directly, zeroed a handful of fields, `ret`, no `call`
+  instruction anywhere in the ~0x30-byte function). The relationship is
+  real in source but the literal call-chain evidence this route looks for
+  was optimized away and does not exist in the compiled binary. Windissect
+  correctly refuses to fabricate it.
+
+So for binaries in this shape (no RTTI, base construction inlined --
+plausibly common across older, aggressively-optimized system DLLs, not
+just this one class), `constructor-vtable-chain` and `rtti-base-descriptor`
+are structurally unusable and `pdb-base-record` is the only route left
+standing, not just the first one worth trying.
 
 Fix directions:
-- Check why RTTI base-descriptor recovery isn't closing this specific,
-  common shape of gap (a verified-vtable class with only its own-base
-  relationship unresolved) -- worth checking whether dui70.dll's RTTI
-  `BaseClassArray` for these vtables is present but unparsed, or genuinely
-  absent (compiled without full RTTI base info) and needs the
-  constructor-vtable-chain route instead.
-- This exact pattern (own vtables 100% verified, one unverified base
-  relationship) is common enough across dui70's class hierarchy that it's
-  worth a dedicated recovery pass rather than only the general
-  `constructor-to-destructor-edge` corroboration path.
+- Check whether windissect's PDB type parser (`pdbtype.rs`) already
+  extracts `LF_CLASS`/base-class records from CodeView type info, and if
+  so why that isn't wired into the base-relationship promotion path yet.
+  PDB type records preserve source-level class hierarchy independent of
+  what the optimizer did to the machine code, so this should work even
+  when both other routes are dead.
+- Once `pdb-base-record` works, consider detecting "no RTTI in this
+  module" up front (one `avrr`-equivalent check) and skipping the RTTI
+  route's recovery-plan gap entry entirely for such binaries, rather than
+  listing it as an open evidence route that can never close.
 
 ## Fixed this session
 
