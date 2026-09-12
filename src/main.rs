@@ -183,7 +183,8 @@ enum Cmd {
         /// Separate verified/candidate semantic output root.
         #[arg(long, default_value = "semantic")]
         semantic_out: PathBuf,
-        /// Optional exact-build proof-gated runtime probe manifest.
+        /// Explicit exact-build proof-gated runtime probe manifest. Windissect
+        /// never executes discovered functions automatically.
         #[arg(long)]
         probe_manifest: Option<PathBuf>,
         /// Optional exact-build manual layout evidence corpus.
@@ -511,23 +512,9 @@ fn run_semantic_probe(db: &mut Database, binary: &Path, options: &RefineOptions)
         );
         return Ok(());
     }
-    let Some(manifest) = semantic_probe::automatic_manifest(db, binary)? else {
-        semantic_probe::write_static_only(db, &probe_out)?;
-        println!("semantic probe: static-only -> {}", probe_out.display());
-        return Ok(());
-    };
-    let manifest_path =
-        std::env::temp_dir().join(format!("windissect-auto-probe-{}.json", std::process::id()));
-    crate::diff::atomic_write(&manifest_path, &serde_json::to_vec(&manifest)?)?;
-    let result =
-        semantic_probe::run_isolated(binary, &manifest_path, &probe_out, manifest.timeout_ms);
-    let _ = std::fs::remove_file(&manifest_path);
-    result?;
-    let imported = semantic_probe::import_result(db, &probe_out)?;
+    semantic_probe::write_static_only(db, &probe_out)?;
     println!(
-        "semantic probe: automatic {} operations, {} imported proofs -> {}",
-        manifest.operations.len(),
-        imported,
+        "semantic probe: static-only (runtime calls require --probe-manifest) -> {}",
         probe_out.display()
     );
     Ok(())

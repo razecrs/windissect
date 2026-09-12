@@ -133,8 +133,12 @@ The owned semantic fixture measures exact-build class, union, bitfield,
 inheritance, vtable, and enum facts with `score-semantic`; its current oracle
 requires at least 99.9% precision. Typedef aliases are withheld because the
 current PDB parser does not expose CodeView `LF_ALIAS` records. Runtime probing
-is opt-in, isolated, exact-build checked, and DLL-only. SYS analysis remains
-static.
+is opt-in, isolated, exact-build checked, and DLL-only. Discovered functions
+are never invoked automatically: verified addressability and ABI do not prove
+process initialization, thread state, purity, or safe side effects. Runtime
+calls require an explicit `--probe-manifest`, and each operation runs in its
+own disposable helper so a crash or timeout becomes a negative observation
+without discarding successful independent probes. SYS analysis remains static.
 
 Generated trees, downloaded Microsoft binaries/PDBs, IDA databases, and the
 143.2 MiB canonical DUI70 IR are deliberately excluded from Git. This avoids

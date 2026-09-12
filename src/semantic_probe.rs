@@ -38,52 +38,34 @@ pub struct ProbeResult {
     pub observations: Vec<ProbeObservation>,
 }
 
-/// Build a conservative runtime workload from facts already proven by the
-/// static pipeline.  Member functions, constructors, and functions with
-/// parameters are intentionally excluded until a typed ABI contract exists.
-pub fn automatic_manifest(db: &Database, binary: &Path) -> Result<Option<ProbeManifest>> {
-    if !runtime_supported() {
-        return Ok(None);
-    }
-    let bytes = std::fs::read(binary).with_context(|| format!("reading {}", binary.display()))?;
-    let binary_sha256 = crate::hex::upper(&Sha256::digest(bytes));
-    let mut operations = Vec::new();
-    for symbol in db
-        .symbols
-        .iter()
-        .filter(|symbol| symbol.is_code && symbol.sig.class.is_none())
-        .filter(|symbol| symbol.sig.params.is_empty())
-        .filter(|symbol| db.symbol_is_verified_callable(&symbol.id))
-        .take(32)
-    {
-        operations.push(ProbeOperation::CallNoArgs {
-            id: format!("auto:{:08X}:{}", symbol.rva, symbol.id),
-            symbol_id: symbol.id.clone(),
-            rva: symbol.rva,
-            acknowledge_side_effects: true,
-        });
-    }
-    Ok((!operations.is_empty()).then_some(ProbeManifest {
-        schema: 1,
-        binary_sha256,
-        timeout_ms: 10_000,
-        operations,
-    }))
-}
-
+#[cfg(test)]
 pub const fn runtime_supported() -> bool {
     cfg!(windows)
 }
 
 pub fn write_static_only(db: &Database, out: &Path) -> Result<()> {
+    let mut observations = vec![ProbeObservation {
+        id: "runtime-capability".into(),
+        status: "static-only".into(),
+        detail: "runtime calls require an explicit exact-build probe manifest".into(),
+    }];
+    observations.extend(
+        db.symbols
+            .iter()
+            .filter(|symbol| symbol.is_code && symbol.sig.class.is_none())
+            .filter(|symbol| symbol.sig.params.is_empty())
+            .filter(|symbol| db.symbol_is_verified_callable(&symbol.id))
+            .map(|symbol| ProbeObservation {
+                id: format!("withheld:{:08X}:{}", symbol.rva, symbol.id),
+                status: "withheld".into(),
+                detail: "addressability and ABI are verified, but host-context preconditions and side effects are not"
+                    .into(),
+            }),
+    );
     let result = ProbeResult {
         schema: 1,
         binary_sha256: db.binary.sha256.clone().unwrap_or_default(),
-        observations: vec![ProbeObservation {
-            id: "runtime-capability".into(),
-            status: "static-only".into(),
-            detail: "dynamic probing is unavailable on this host".into(),
-        }],
+        observations,
     };
     crate::diff::atomic_write(out, &serde_json::to_vec_pretty(&result)?)
 }
@@ -239,38 +221,98 @@ pub fn load_and_validate(db: &Database, binary: &Path, path: &Path) -> Result<Pr
 }
 
 pub fn run_isolated(binary: &Path, manifest: &Path, out: &Path, timeout_ms: u64) -> Result<()> {
+    let source: ProbeManifest = serde_json::from_slice(&std::fs::read(manifest)?)?;
     let executable = std::env::current_exe()?;
-    let mut command = std::process::Command::new(executable);
-    command
-        .arg("semantic-probe-helper")
-        .arg("--binary")
-        .arg(binary)
-        .arg("--manifest")
-        .arg(manifest)
-        .arg("--out")
-        .arg(out);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command.spawn()?;
-    let start = std::time::Instant::now();
-    loop {
-        if let Some(status) = child.try_wait()? {
-            ensure!(
-                status.success(),
-                "semantic probe helper failed with {status}"
-            );
-            return Ok(());
+    let mut observations = Vec::new();
+    let mut failed = 0usize;
+    let scratch = std::env::temp_dir().join(format!(
+        "windissect-probe-{}-{}",
+        std::process::id(),
+        crate::hex::lower(&Sha256::digest(manifest.as_os_str().as_encoded_bytes()))[..12]
+            .to_string()
+    ));
+    std::fs::create_dir_all(&scratch)?;
+
+    for (index, operation) in source.operations.iter().enumerate() {
+        let operation_value = serde_json::to_value(operation)?;
+        let operation_id = operation_value
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .context("probe operation has no string id")?
+            .to_owned();
+        let operation_manifest = scratch.join(format!("{index:03}-manifest.json"));
+        let operation_out = scratch.join(format!("{index:03}-result.json"));
+        let single = serde_json::json!({
+            "schema": source.schema,
+            "binary_sha256": &source.binary_sha256,
+            "timeout_ms": source.timeout_ms,
+            "operations": [operation_value],
+        });
+        crate::diff::atomic_write(&operation_manifest, &serde_json::to_vec(&single)?)?;
+
+        let mut command = std::process::Command::new(&executable);
+        command
+            .arg("semantic-probe-helper")
+            .arg("--binary")
+            .arg(binary)
+            .arg("--manifest")
+            .arg(&operation_manifest)
+            .arg("--out")
+            .arg(&operation_out);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
         }
-        if start.elapsed() > std::time::Duration::from_millis(timeout_ms) {
-            child.kill()?;
-            let _ = child.wait();
-            anyhow::bail!("semantic probe helper timed out after {timeout_ms} ms");
+        let mut child = command.spawn()?;
+        let start = std::time::Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if start.elapsed() > std::time::Duration::from_millis(timeout_ms) {
+                child.kill()?;
+                let _ = child.wait();
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+
+        if status.is_some_and(|value| value.success()) {
+            let result: ProbeResult = serde_json::from_slice(&std::fs::read(&operation_out)?)?;
+            observations.extend(result.observations);
+        } else {
+            failed += 1;
+            let (status, detail) = match status {
+                Some(value) => ("crashed", format!("isolated helper failed with {value}")),
+                None => (
+                    "timed-out",
+                    format!("isolated helper exceeded {timeout_ms} ms"),
+                ),
+            };
+            eprintln!("semantic probe {operation_id}: {detail}");
+            observations.push(ProbeObservation {
+                id: operation_id,
+                status: status.into(),
+                detail,
+            });
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
     }
+
+    let result = ProbeResult {
+        schema: 1,
+        binary_sha256: source.binary_sha256,
+        observations,
+    };
+    crate::diff::atomic_write(out, &serde_json::to_vec_pretty(&result)?)?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    if failed > 0 {
+        eprintln!(
+            "semantic probe: {failed}/{} operations failed safely in isolated helpers",
+            source.operations.len()
+        );
+    }
+    Ok(())
 }
 
 pub fn helper(binary: &Path, manifest_path: &Path, out: &Path) -> Result<()> {
@@ -376,6 +418,27 @@ mod tests {
     #[test]
     fn windows_host_supports_runtime_probe() {
         assert!(runtime_supported());
+    }
+
+    #[test]
+    fn static_refinement_records_explicit_probe_requirement() {
+        let path = std::env::temp_dir().join(format!(
+            "windissect-static-probe-{}.json",
+            std::process::id()
+        ));
+        let db = Database {
+            binary: BinaryInfo {
+                sha256: Some("CC".repeat(32)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        write_static_only(&db, &path).unwrap();
+        let result: ProbeResult = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(result.observations.len(), 1);
+        assert_eq!(result.observations[0].status, "static-only");
+        assert!(result.observations[0].detail.contains("explicit"));
     }
 
     #[test]
