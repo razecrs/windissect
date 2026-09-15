@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -83,9 +85,19 @@ type corpusManifest struct {
 	Targets []targetSpec `json:"targets"`
 }
 
+// A corpus entry is only as good as the deepest stage that produced it.
+// An entry written before depth was recorded has no value here, which reads
+// as shallow and is exactly right: those entries came from the shallow fleet.
+const (
+	depthShallow = "shallow"
+	depthFull    = "full"
+)
+
 type processOutcome struct {
-	IRPath  string
-	PDBUsed bool
+	IRPath       string
+	PDBUsed      bool
+	Depth        string
+	SemanticPath string
 }
 
 type corpusResult struct {
@@ -101,6 +113,8 @@ type corpusResult struct {
 	PDBAge     uint32 `json:"pdb_age,omitempty"`
 	PDBUsed    bool   `json:"pdb_used"`
 	IR         string `json:"ir,omitempty"`
+	Depth      string `json:"depth,omitempty"`
+	Semantic   string `json:"semantic,omitempty"`
 	Headers    string `json:"headers,omitempty"`
 	Rust       string `json:"rust,omitempty"`
 	Error      string `json:"error,omitempty"`
@@ -255,6 +269,16 @@ func findExtractor(baseDir string) string {
 		return candidate2
 	}
 	return ""
+}
+
+// takeFlag removes a valueless flag and reports whether it was present.
+func takeFlag(args []string, name string) ([]string, bool) {
+	for i := 0; i < len(args); i++ {
+		if args[i] == name {
+			return append(args[:i:i], args[i+1:]...), true
+		}
+	}
+	return args, false
 }
 
 func takeOption(args []string, name string) ([]string, string, error) {
@@ -431,7 +455,7 @@ func resolveTargetPath(target targetSpec, windowsDir, probeDir string) string {
 	return ""
 }
 
-func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutcome, error) {
+func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool) (processOutcome, error) {
 	if _, err := os.Stat(dllPath); err != nil {
 		return processOutcome{}, err
 	}
@@ -446,11 +470,23 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutc
 	}
 	irOut := filepath.Join(irDir, stem+".json")
 
-	work, err := os.MkdirTemp("", "windissect-")
+	// Stage inside the corpus, not the system temp directory.
+	//
+	// os.MkdirTemp("") resolves to %TEMP%, which is on C: no matter where the
+	// corpus lives. Every extraction result then had to cross volumes to be
+	// installed, which os.Rename cannot do on Windows -- so the work happened,
+	// took minutes, and was thrown away at the final step. Staging next to the
+	// destination keeps the install on one volume, keeps multi-hundred-megabyte
+	// intermediates off the system drive, and makes cleanup local.
+	stage := filepath.Join(filepath.Dir(irDir), "work")
+	if err := os.MkdirAll(stage, 0o755); err != nil {
+		return processOutcome{}, err
+	}
+	work, err := os.MkdirTemp(stage, "windissect-")
 	if err != nil {
 		return processOutcome{}, err
 	}
-	defer os.RemoveAll(work)
+	defer removeTree(work)
 	pass1 := filepath.Join(work, "pass1.json")
 	cmd1 := exec.Command(exePath, "extract", dllPath, "--out", pass1)
 	cmd1.Dir = work
@@ -500,11 +536,22 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutc
 		}
 	}
 
-	// Pass 2: Extract with PDB
+	// Pass 2: extract with the PDB, exhaustively.
+	//
+	// --pgressive costs disk, not time: on a small module it added 1.6s and
+	// took the IR from 11MB to 76MB. It leaves the *verified* set identical
+	// but triples the candidate classes (221 -> 676) and multiplies generic
+	// recoveries tenfold (327 -> 3439). The interesting types on a shell
+	// surface arrive as candidates first, so shallow extraction produces a
+	// corpus that looks complete and answers none of the questions worth
+	// asking of it.
 	final := filepath.Join(work, "final.json")
 	args := []string{"extract", dllPath, "--out", final}
 	if pdbPath != "" {
 		args = append(args, "--pdb", pdbPath)
+	}
+	if !shallow {
+		args = append(args, "--pgressive")
 	}
 
 	cmd2 := exec.Command(exePath, args...)
@@ -513,16 +560,51 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutc
 	if err != nil {
 		return processOutcome{}, fmt.Errorf("pass 2 failed: %w: %s", err, output)
 	}
-	if b, err := os.ReadFile(final); err != nil || !json.Valid(b) {
-		return processOutcome{}, fmt.Errorf("pass 2 produced invalid IR")
+	// A progressive run writes a directory whose IR is inventory.ir.json;
+	// a plain run writes the file directly.
+	irFile := final
+	if !shallow {
+		irFile = filepath.Join(final, "inventory.ir.json")
 	}
-	verify := exec.Command(exePath, "verify", "--ir", final)
+	if b, err := os.ReadFile(irFile); err != nil || !json.Valid(b) {
+		return processOutcome{}, fmt.Errorf("pass 2 produced invalid IR at %s", irFile)
+	}
+	verify := exec.Command(exePath, "verify", "--ir", irFile)
 	verify.Dir = work
 	if output, err := verify.CombinedOutput(); err != nil {
 		return processOutcome{}, fmt.Errorf("verification failed: %w: %s", err, output)
 	}
-	if err := replaceFile(final, irOut); err != nil {
+	if err := replaceFile(irFile, irOut); err != nil {
 		return processOutcome{}, err
+	}
+
+	// Stage 3: the proof-gated semantic projection.
+	//
+	// This is the stage that turns a symbol list into classes, vtables,
+	// verified slots and base relationships, which is the only form in which
+	// the IR can answer "what is this type and how do I reach it". Without it
+	// the corpus is a phone book.
+	//
+	// A failure here is reported and does not fail the target: the extracted
+	// IR is still a real result, and one host-only module that refuses to be
+	// probed should not discard the other eighty-seven.
+	semanticPath := ""
+	if !shallow && pdbPath != "" {
+		semanticOut := filepath.Join(filepath.Dir(irDir), "semantic", stem)
+		refineOut := filepath.Join(filepath.Dir(irDir), "refinement", stem+".json")
+		_ = os.MkdirAll(filepath.Dir(refineOut), 0o755)
+		semantic := exec.Command(exePath, "refine", "--semantic",
+			"--ir", irOut,
+			"--binary", dllPath,
+			"--pdb", pdbPath,
+			"--semantic-out", semanticOut,
+			"--out", refineOut)
+		semantic.Dir = work
+		if _, err := runStreaming(semantic); err != nil {
+			fmt.Printf("[!] %s: semantic refine failed, IR kept: %v\n", stem, err)
+		} else if info, statErr := os.Stat(semanticOut); statErr == nil && info.IsDir() {
+			semanticPath = semanticOut
+		}
 	}
 	record := exec.Command(exePath, "record-build", irOut, "--history", filepath.Join(filepath.Dir(irDir), "history"))
 	record.Dir = filepath.Dir(irDir)
@@ -531,7 +613,16 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string) (processOutc
 	} else {
 		fmt.Print(string(output))
 	}
-	return processOutcome{IRPath: irOut, PDBUsed: pdbPath != ""}, nil
+	depth := depthFull
+	if shallow {
+		depth = depthShallow
+	}
+	return processOutcome{
+		IRPath:       irOut,
+		PDBUsed:      pdbPath != "",
+		Depth:        depth,
+		SemanticPath: semanticPath,
+	}, nil
 }
 
 func runStreaming(command *exec.Cmd) ([]byte, error) {
@@ -552,7 +643,7 @@ func replaceFile(source, destination string) error {
 	if err := os.Rename(destination, backup); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("preserve previous IR: %w", err)
 	}
-	if err := os.Rename(source, destination); err != nil {
+	if err := moveFile(source, destination); err != nil {
 		_ = os.Rename(backup, destination)
 		return fmt.Errorf("install verified IR: %w", err)
 	}
@@ -560,6 +651,76 @@ func replaceFile(source, destination string) error {
 		return fmt.Errorf("remove previous IR backup: %w", err)
 	}
 	return nil
+}
+
+// removeTree deletes a staging directory, retrying briefly.
+//
+// Windows refuses to unlink a file while any handle to it is open, and a child
+// process that has just exited can still hold one for a moment. A single
+// RemoveAll therefore fails intermittently and, because the result was
+// discarded, silently leaked a directory of intermediates per run.
+func removeTree(dir string) {
+	for attempt := 0; attempt < 5; attempt++ {
+		if err := os.RemoveAll(dir); err == nil {
+			return
+		}
+		time.Sleep(time.Duration(50*(attempt+1)) * time.Millisecond)
+	}
+	// Still held: leave it rather than fail the run, but say so, because a
+	// silent leak is how the system drive fills up over many runs.
+	fmt.Printf("[!] could not remove staging directory %s; remove it manually\n", dir)
+}
+
+// moveFile relocates a file, falling back to copy-then-delete when the source
+// and destination are on different volumes.
+//
+// The extractor stages its result in the system temp directory, which normally
+// sits on C:. A corpus root on any other drive therefore made every install
+// fail with "cannot move the file to a different disk drive", after the
+// extraction itself had already succeeded: os.Rename is a single filesystem
+// operation and does not cross volumes on Windows.
+func moveFile(source, destination string) error {
+	if err := os.Rename(source, destination); err == nil {
+		return nil
+	} else if !errors.Is(err, syscall.EXDEV) && !isCrossDeviceError(err) {
+		return err
+	}
+	in, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	out, err := os.Create(destination)
+	if err != nil {
+		in.Close()
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	in.Close()
+	if closeErr := out.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		_ = os.Remove(destination)
+		return copyErr
+	}
+	// The copy is the durable result; failing to clean up the staged file is
+	// not a reason to report the install as failed.
+	_ = os.Remove(source)
+	return nil
+}
+
+// isCrossDeviceError reports the Windows-specific spelling of the same
+// condition, which does not surface as syscall.EXDEV.
+func isCrossDeviceError(err error) bool {
+	const errorNotSameDevice = syscall.Errno(17)
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
+		var errno syscall.Errno
+		if errors.As(linkErr.Err, &errno) {
+			return errno == errorNotSameDevice
+		}
+	}
+	return false
 }
 
 func emitAllOutputs(baseDir, exePath string) error {
@@ -765,7 +926,7 @@ func windowsBuild() uint32 {
 	return detectedBuild
 }
 
-func processTargets(targets []targetSpec, windowsDir, root, extractorPath string) ([]corpusResult, bool) {
+func processTargets(targets []targetSpec, windowsDir, root, extractorPath string, shallow bool) ([]corpusResult, bool) {
 	probeDir := filepath.Join(root, "probe")
 	irDir := filepath.Join(root, "ir")
 	_ = os.MkdirAll(probeDir, 0o755)
@@ -790,7 +951,7 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 			results = append(results, result)
 			continue
 		}
-		if previous, ok := prior[target.ID]; ok && reusableResult(previous, result.SourcePath) {
+		if previous, ok := prior[target.ID]; ok && reusableResult(previous, result.SourcePath, shallow) {
 			previous.SourcePath = result.SourcePath
 			previous.Required = target.Required
 			previous.Area = target.Area
@@ -798,7 +959,7 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 			fmt.Printf("[*] Reusing verified exact-build target %s\n", target.ID)
 			continue
 		}
-		outcome, err := processDLL(result.SourcePath, target.ID, probeDir, irDir, extractorPath)
+		outcome, err := processDLL(result.SourcePath, target.ID, probeDir, irDir, extractorPath, shallow)
 		if err != nil {
 			result.Error = err.Error()
 			if target.Required {
@@ -811,6 +972,8 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 		} else {
 			result.IR = outcome.IRPath
 			result.PDBUsed = outcome.PDBUsed
+			result.Depth = outcome.Depth
+			result.Semantic = outcome.SemanticPath
 			result.Status = "verified-static"
 			if outcome.PDBUsed {
 				result.Status = "verified-pdb"
@@ -823,8 +986,17 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 	return results, failed
 }
 
-func reusableResult(result corpusResult, sourcePath string) bool {
+func reusableResult(result corpusResult, sourcePath string, shallow bool) bool {
 	if !strings.HasPrefix(result.Status, "verified-") || result.IR == "" || result.SHA256 == "" {
+		return false
+	}
+	// The bug this closes: the first fleet run over the taskbar group was
+	// shallow, so every target sat in the index as "verified-pdb" with an IR
+	// on disk and a matching hash. A deep re-run then reused all 88 of them
+	// and finished in zero seconds, reporting success while answering none of
+	// the questions the deep pass exists to answer. Matching hashes prove the
+	// binary is the same; they say nothing about how far it was taken.
+	if !shallow && result.Depth != depthFull {
 		return false
 	}
 	if info, err := os.Stat(result.IR); err != nil || info.IsDir() {
@@ -898,6 +1070,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	// Full pipeline by default. Shallow extraction produces a corpus that
+	// looks finished and cannot answer a single structural question, so it is
+	// opt-in rather than the thing you get by forgetting a flag.
+	args, shallow := takeFlag(args, "--shallow")
 	root := baseDir
 	if rootOption != "" {
 		root, err = filepath.Abs(rootOption)
@@ -944,15 +1120,22 @@ func main() {
 		}
 	}
 	if onlyOption != "" {
+		// Matched case-insensitively: every other name on Windows is, and a
+		// silent "unknown target" on a capitalisation difference is a poor
+		// way to find that out.
 		wanted := map[string]bool{}
 		for _, id := range strings.Split(onlyOption, ",") {
-			wanted[strings.TrimSpace(id)] = true
+			trimmed := strings.TrimSpace(id)
+			if trimmed != "" {
+				wanted[strings.ToLower(trimmed)] = true
+			}
 		}
 		filtered := targets[:0]
 		for _, target := range targets {
-			if wanted[target.ID] {
+			key := strings.ToLower(target.ID)
+			if wanted[key] {
 				filtered = append(filtered, target)
-				delete(wanted, target.ID)
+				delete(wanted, key)
 			}
 		}
 		if len(wanted) > 0 {
@@ -984,7 +1167,7 @@ func main() {
 
 	switch cmd {
 	case "pull":
-		results, failed := processTargets(targets, windowsDir, root, extractorPath)
+		results, failed := processTargets(targets, windowsDir, root, extractorPath, shallow)
 		if err := writeCorpusIndex(root, extractorPath, results); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			failed = true
@@ -998,7 +1181,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "all":
-		results, failed := processTargets(targets, windowsDir, root, extractorPath)
+		results, failed := processTargets(targets, windowsDir, root, extractorPath, shallow)
 		if err := emitAllOutputs(root, extractorPath); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			failed = true

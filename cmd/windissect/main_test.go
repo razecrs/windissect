@@ -70,3 +70,49 @@ func TestInstalledNotepadPackageCanBeResolved(t *testing.T) {
 		t.Fatalf("installed Notepad did not resolve from %q", root)
 	}
 }
+
+// A shallow corpus entry is indistinguishable from a deep one by hash: the
+// binary did not change, only how far it was taken. The whole taskbar group
+// was reused this way once, finishing a deep run in zero seconds.
+func TestShallowResultDoesNotSatisfyDeepRun(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "target.dll")
+	if err := os.WriteFile(binary, []byte("MZ"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ir := filepath.Join(dir, "target.ir.json")
+	if err := os.WriteFile(ir, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := fileSHA256(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shallowEntry := corpusResult{
+		Status: "verified-pdb",
+		IR:     ir,
+		SHA256: hash,
+		Depth:  depthShallow,
+	}
+
+	if !reusableResult(shallowEntry, binary, true) {
+		t.Fatal("a shallow entry should still satisfy a shallow run")
+	}
+	if reusableResult(shallowEntry, binary, false) {
+		t.Fatal("a shallow entry must not satisfy a deep run")
+	}
+
+	// Entries written before depth was recorded read as shallow, which is
+	// what the first taskbar pull actually was.
+	legacy := shallowEntry
+	legacy.Depth = ""
+	if reusableResult(legacy, binary, false) {
+		t.Fatal("a depth-less legacy entry must not satisfy a deep run")
+	}
+
+	deepEntry := shallowEntry
+	deepEntry.Depth = depthFull
+	if !reusableResult(deepEntry, binary, false) {
+		t.Fatal("a deep entry should satisfy a deep run")
+	}
+}
