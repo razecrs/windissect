@@ -2,6 +2,7 @@
 /.idea/
 /%TEMP%/
 /bin/
+/corpus/
 /docs/api/
 /generated/
 /generated-layout-check/
@@ -16,16 +17,3 @@
 /analysis/ida/
 *.dll
 *.pdb
-
-/tool-study/capstone/
-/tool-study/diaphora/
-/tool-study/getsentry-pdb/
-/tool-study/ghidra/
-/tool-study/goblin/
-/tool-study/iced/
-/tool-study/mempdb/
-/tool-study/microsoft-pdb-rs/
-/tool-study/pdbinspector/
-/tool-study/pdbparse/
-/tool-study/retdec/
-/tool-study/trailofbits-pe-parse/

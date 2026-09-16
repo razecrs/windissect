@@ -1,4 +1,4 @@
-//! PE export and PDB internal symbol extractor. See `docs/codebase.md#2-extractrs` or `cargo doc`.
+//! PE export and PDB internal symbol extractor. See `docs/architecture.md` or `cargo doc`.
 
 use crate::model::{BinaryInfo, Confidence, Coverage, Kind, Provenance, Symbol};
 use anyhow::{Context, Result};
@@ -14,7 +14,7 @@ pub struct Extracted {
     pub pdb_records: Vec<serde_json::Value>,
 }
 
-/// Creates a symbol shell with default flags. See `docs/codebase.md#2-extractrs`.
+/// Creates a symbol shell with default flags. See `docs/architecture.md`.
 fn blank(id: String, mangled: String, vaddr: u64, exported: bool, prov: Provenance) -> Symbol {
     Symbol {
         id,

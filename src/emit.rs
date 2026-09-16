@@ -492,7 +492,7 @@ fn emit_class_members(
         if method.contains('`') || method.contains('<') || method.contains("operator") {
             continue; // closures, template methods, operator overloads
         }
-        // Multiple-inheritance adjustor thunks demangle as "[thunk]:..." — skip.
+        // Multiple-inheritance adjustor thunks demangle as "[thunk]:...", skip.
         if m.demangled
             .as_deref()
             .is_some_and(|d| d.starts_with("[thunk]"))
@@ -1379,7 +1379,7 @@ fn emit_flat_c_header(db: &Database, out_dir: &std::path::Path) -> anyhow::Resul
 /// PE-vftable bounds remain explicitly labelled by their evidence strings.
 fn abi_metadata_header(db: &Database) -> String {
     let mut out = String::from(
-        "// Windissect recovered ABI metadata — DO NOT EDIT.\n// Portable across C++17, C++20, C++23, and C++26 draft modes.\n#pragma once\n#include <cstddef>\n#include <cstdint>\n\nnamespace windissect_abi {\nstruct TypeLayout { const char* name; std::uint64_t size; const char* kind; };\nstruct FieldLayout { const char* owner; const char* name; std::uint32_t type_index; std::uint64_t offset; bool is_static; };\nstruct FieldObservation { const char* owner; const char* suggested_name; std::uint64_t offset; std::uint32_t width; const char* access; std::uint32_t evidence_rva; const char* evidence_symbol; const char* confidence; };\nstruct BaseLayout { const char* derived; const char* base; std::int64_t offset; bool is_virtual; const char* evidence; const char* confidence; };\nstruct VTableLayout { const char* name; std::uint32_t rva; std::uint32_t slots; const char* evidence; const char* confidence; };\nstruct VTableSlotLayout { std::uint32_t table_rva; std::uint32_t slot; std::uint32_t target_rva; const char* target_id; const char* target_name; bool ambiguous; std::int32_t this_adjustment; };\n\n",
+        "// Windissect recovered ABI metadata. DO NOT EDIT.\n// Portable across C++17, C++20, C++23, and C++26 draft modes.\n#pragma once\n#include <cstddef>\n#include <cstdint>\n\nnamespace windissect_abi {\nstruct TypeLayout { const char* name; std::uint64_t size; const char* kind; };\nstruct FieldLayout { const char* owner; const char* name; std::uint32_t type_index; std::uint64_t offset; bool is_static; };\nstruct FieldObservation { const char* owner; const char* suggested_name; std::uint64_t offset; std::uint32_t width; const char* access; std::uint32_t evidence_rva; const char* evidence_symbol; const char* confidence; };\nstruct BaseLayout { const char* derived; const char* base; std::int64_t offset; bool is_virtual; const char* evidence; const char* confidence; };\nstruct VTableLayout { const char* name; std::uint32_t rva; std::uint32_t slots; const char* evidence; const char* confidence; };\nstruct VTableSlotLayout { std::uint32_t table_rva; std::uint32_t slot; std::uint32_t target_rva; const char* target_id; const char* target_name; bool ambiguous; std::int32_t this_adjustment; };\n\n",
     );
     emit_abi_types(db, &mut out);
     emit_abi_fields(db, &mut out);
@@ -1662,7 +1662,7 @@ fn cpp_string(value: &str) -> String {
 
 fn vcall_header(db: &Database) -> String {
     let mut out = String::from(
-        "// Windissect signature-verified virtual-slot helpers — DO NOT EDIT.\n\
+        "// Windissect signature-verified virtual-slot helpers. DO NOT EDIT.\n\
          #pragma once\n#include <cstdint>\n\n\
          #if defined(_M_IX86) || defined(__i386__)\n\
          #error \"Windissect typed vcalls currently require the Windows x64 ABI\"\n\
@@ -1942,7 +1942,7 @@ fn direct_call_preamble(db: &Database) -> String {
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(0);
     let mut out = String::from(
-        "// Windissect exact-build RVA call helpers — DO NOT EDIT.\n\
+        "// Windissect exact-build RVA call helpers. DO NOT EDIT.\n\
          // Configure set_resolver() with a loader that validates the expected build.\n\
          #pragma once\n#include <cstddef>\n#include <cstdint>\n#include <cstdlib>\n\n\
          #if defined(_M_IX86) || defined(__i386__)\n\

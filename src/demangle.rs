@@ -1,4 +1,4 @@
-//! Demangles MSVC C++ mangled symbols and classifies signatures. See `docs/codebase.md#4-demanglers--typeparsers` or `cargo doc`.
+//! Demangles MSVC C++ mangled symbols and classifies signatures. See `docs/architecture.md` or `cargo doc`.
 
 use crate::model::{Kind, Signature, Symbol};
 use crate::typeparse::{self, split_sep_top, split_top, type_text};
@@ -62,12 +62,12 @@ pub fn parse_decl(decl: &str) -> Signature {
     match s[close + 1..].trim() {
         "" => {}
         "const" => sig.is_const = true,
-        _ => return sig, // unexpected trailing text — don't guess
+        _ => return sig, // unexpected trailing text, don't guess
     }
 
     // Split head into "<ret> <callconv> <qualified-name>".
     let Some((cc_idx, cc)) = typeparse::top_token(head, CALLCONVS) else {
-        return sig; // no calling convention — flat C export / data
+        return sig; // no calling convention, flat C export / data
     };
     sig.callconv = Some(cc.to_string());
     let ret = head[..cc_idx].trim();
@@ -157,7 +157,7 @@ pub fn classify(s: &Symbol) -> Kind {
     if m.starts_with("??_7") || m.starts_with("??_R") || m.starts_with("??_C") {
         return Kind::Operator; // vftable / RTTI / string literal (not a function)
     }
-    // Flat C export: never mangled, so no signature — but the name is known.
+    // Flat C export: never mangled, so no signature, but the name is known.
     if !m.starts_with('?') {
         return Kind::CFunc;
     }

@@ -8,7 +8,7 @@ use std::path::Path;
 
 pub fn emit(db: &Database, out: &Path) -> Result<()> {
     let mut text = String::new();
-    writeln!(text, "; Windissect canonical disassembly — DO NOT EDIT")?;
+    writeln!(text, "; Windissect canonical disassembly. DO NOT EDIT")?;
     writeln!(text, "; binary: {}", db.binary.file)?;
     writeln!(
         text,

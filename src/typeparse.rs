@@ -38,7 +38,7 @@ pub fn parse(s: &str) -> Type {
         };
     }
 
-    // Function pointer: "RET (__cc *)(PARAMS)" — two top-level paren groups, the
+    // Function pointer: "RET (__cc *)(PARAMS)": two top-level paren groups, the
     // first containing a '*'. Handle before decorator stripping.
     if let Some(t) = parse_fnptr(s) {
         return t;
@@ -227,7 +227,7 @@ pub fn split_top(s: &str, sep: char) -> Vec<&str> {
     out
 }
 
-/// Last balanced `(...)` at nesting depth 0 — the method parameter list.
+/// Last balanced `(...)` at nesting depth 0: the method parameter list.
 pub fn last_top_parens(s: &str) -> Option<(usize, usize)> {
     let (mut depth, mut cur, mut found) = (0i32, None, None);
     for (i, ch) in s.char_indices() {
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn template_with_nontype_arg() {
-        // DynamicArray<Element*, 0> — a type arg and a non-type constant arg.
+        // DynamicArray<Element*, 0>: a type arg and a non-type constant arg.
         let t = parse("class DirectUI::DynamicArray<class DirectUI::Element *, 0>");
         match t {
             Type::Named { path, args } => {

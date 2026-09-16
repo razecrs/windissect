@@ -1,163 +1,153 @@
 # Windissect
 
-Windissect turns Windows PE binaries and their matching Microsoft PDBs into a
-version-anchored, machine-readable map of Windows internals. Its extraction
-model is target-agnostic: DUI70 is the deep validation corpus, while AMSI
-exercises the generic PE/export path. The fleet orchestrator includes curated
-targets across DWM, composition, shell, taskbar, XAML, input, and storage.
+Windissect turns a Windows PE binary (DLL, EXE or SYS) and its matching
+Microsoft PDB into a build-anchored, machine-readable map of that binary's
+internals, then generates C, C++ and Rust you can build against.
 
-## The ReWindows corpus
+It only emits what it can prove. Every fact carries its evidence, and anything
+that isn't proven stays marked as a candidate instead of showing up as a
+callable declaration. When Windows updates, Windissect records the new build
+and diffs it against the last one.
 
-The output of Windissect runs is published per DLL in the
-[ReWindows](https://github.com/ReWindows) organization: `dwmcore`, `uDWM`,
-`dcomp`, `twinui`, `twinui.pcshell`, `comctl32`, `uxtheme`, `taskbar`, and
-more, over 130 repositories. Each carries a `history/` archive of every build
-observed, plus generated C/C++ headers and Rust FFI crates where the evidence
-supports them, so changes across Windows Updates can be diffed without running
-the tool yourself.
+## ReWindows
+
+Windissect's output for Windows system DLLs is published in the
+[ReWindows](https://github.com/ReWindows) organization, one repository per DLL
+(`dwmcore`, `uDWM`, `dcomp`, `twinui`, `twinui.pcshell`, `comctl32`,
+`uxtheme`, `taskbar` and 130+ more). Each repository has a `history/` archive
+of every build observed, plus C/C++ headers and Rust FFI crates where the
+evidence supports them. If you only need the data, start there.
 
 ## What it produces
 
-- typed JSON IR for exports and private PDB procedures
-- MSVC-demangled signatures with structured C++ types
-- function sizes, implementation hashes, call edges, and imported APIs
-- generated C++ declarations and proof-gated Rust FFI crates
-- exact-build C++ RVA helpers and virtual-slot helpers when callable identity
-  and ABI claims are independently proven
-- C23 RVA symbol tables for runtime consumers
-- generated API documentation carrying evidence and usability status
+- JSON IR for exports and private PDB procedures, tied to the exact build
+  (image SHA-256, timestamp, PDB GUID and age)
+- MSVC-demangled signatures parsed into structured C++ types
+- function sizes, implementation hashes, call edges and imported APIs
+- class layouts, inheritance, vtable slot order and enum values, verified
+  against the binary and round-tripped through a compiler
+- C/C++ headers and Rust FFI crates, split into verified and candidate output
+- typed call helpers for x64, emitted only when both the address and the
+  signature are proven
+- C symbol tables with RVAs
+- per-build history and semantic diffs between Windows builds
 
-See the [architecture](docs/architecture.md), the
-[five-minute demonstration](docs/five-minute-demo.md), and the explicit
-[verified versus experimental output policy](docs/output-status.md).
+Generated headers compile as C17, C23, C26 draft, C++17, C++20, C++23 and
+C++26 draft.
 
-Generated native artifacts have an explicit language floor and are continuously
-compiled in every newer standards mode: C17, C23, C26 draft (`-std=c2y`), and
-C++17, C++20, C++23, C++26 draft (`-std=c++2c`). The emitters avoid relying on
-newer-dialect-only syntax unless the generated header advertises that minimum.
-Windissect also names its C-shaped ABI surface consumed from C++20 through
-`extern "C"` the **C20 profile**. This is a Windissect compatibility profile,
-not a claim that ISO published a C20 language standard.
+## How it compares
 
-Every IR records the exact binary, image base, architecture, timestamp, and PDB
-GUID/age. Windissect rejects mismatched PDBs. Metadata extraction may remain
-available for an unsupported instruction set, but disassembly-dependent
-analysis is withheld rather than decoded as the wrong architecture.
+On `dui70.dll` (DirectUI), against the hand-maintained DirectUI headers in
+ExplorerPatcher:
 
-For x64 targets, `windissect_calls.h` exposes typed calls only when both
-addressability and signature claims pass their proof obligations. Its default
-Windows resolver checks the loaded image's PE timestamp and bounds.
-`windissect_vcalls.h` applies the same proof boundary to virtual slots;
-conflicting or incomplete signatures remain metadata-only.
+| | Windissect | ExplorerPatcher |
+|---|---:|---:|
+| Classes | 766 | 350 |
+| Declarations | 7,532 | 4,095 |
+| Generated headers | 396 | 159 |
+| Verified vtables | 440 | n/a |
+| Verified vtable slots | 8,370 | n/a |
+| Rust bindings | yes | no |
 
-## Analyze one binary
+Extracting the DLL and PDB takes about 2 seconds, and semantic refinement about
+14 seconds.
 
-```powershell
-cargo build --release
-target\release\windissect extract C:\Windows\System32\dwmapi.dll --out ir\dwmapi.json
-target\release\windissect extract C:\Windows\System32\dwmapi.dll --pdb probe\dwmapi.pdb --out ir\dwmapi.json
-target\release\windissect verify --ir ir\dwmapi.json
-target\release\windissect emit-headers --ir ir\dwmapi.json --out headers\dwmapi
-target\release\windissect emit-rust --ir ir\dwmapi.json --out rust\dwmapi-sys
-target\release\windissect emit-syms --ir ir\dwmapi.json --out syms
-target\release\windissect diff ir\old\dwmapi.json ir\new\dwmapi.json --json-out changes.json --markdown-out changes.md
-target\release\windissect record-build ir\dwmapi.json --history history
-target\release\windissect refine --semantic --ir ir\dwmapi.json --binary C:\Windows\System32\dwmapi.dll --out refinement\dwmapi.json --out-ir ir\dwmapi.semantic.json --semantic-out semantic\dwmapi
-target\release\windissect refine --ir ir\dwmapi.json --reference path\to\headers --out refinement\dwmapi-reference.json --out-ir ir\dwmapi.refined.json
-```
+## Quick start
 
-`emit-headers` writes a compile-gated primary `<target>.h` containing verified
-ABI metadata and proof-gated call helpers. Exhaustive reconstructed class
-declarations are kept in `<target>_candidates.h`; that opt-in umbrella may
-contain unresolved language or ownership ambiguities and is not presented as
-an ABI-safe SDK.
-
-Reference-guided refinement writes a proof-gated recovery queue into the
-refined IR. A reference declaration can open a job, but only independently
-recorded PE/PDB/disassembly evidence can move that job to `verified`.
-Semantic refinement also writes `recovery-plan.json` and `recovery-plan.md`.
-This target-independent queue is derived only from the IR and ranks unresolved
-ABI, layout, inheritance, vtable, enum, and proof-conflict facts by the next
-independent evidence route; it does not require a reference project.
-
-For the quickest reproducible run on a fresh Windows clone:
+On Windows with Rust installed:
 
 ```powershell
 pwsh -File scripts/demo.ps1
 ```
 
-This analyzes the installed `amsi.dll`, verifies the resulting schema-v3 IR,
-and emits C, C++, Rust, symbol, and evidence surfaces under `target/demo/`.
+This analyzes your installed `amsi.dll`, verifies the IR, and writes C, C++,
+Rust, symbol and evidence output to `target/demo/amsi/`. See
+[docs/quickstart.md](docs/quickstart.md) for the full DirectUI run.
 
-## Build history and diffs
+## Analyze one binary
 
-Fleet extraction automatically records every successfully analyzed build. The
-archive is intentionally static-host friendly:
+```powershell
+cargo build --release
+$wd = "target\release\windissect"
+
+& $wd extract C:\Windows\System32\dwmapi.dll --pdb dwmapi.pdb --out ir\dwmapi.json
+& $wd verify --ir ir\dwmapi.json
+& $wd emit-headers --ir ir\dwmapi.json --out headers\dwmapi
+& $wd emit-rust --ir ir\dwmapi.json --out rust\dwmapi-sys
+& $wd emit-syms --ir ir\dwmapi.json --out syms
+& $wd refine --semantic --ir ir\dwmapi.json --binary C:\Windows\System32\dwmapi.dll `
+    --out refinement\dwmapi.json --out-ir ir\dwmapi.semantic.json --semantic-out semantic\dwmapi
+```
+
+The PDB is optional. Without one you get exports only, and private types are
+reported as unavailable rather than guessed.
+
+`emit-headers` writes `<target>.h` with verified ABI metadata and proven call
+helpers only. Everything else Windissect reconstructed goes into
+`<target>_candidates.h`, which is opt-in and not ABI-safe.
+
+`refine --semantic` also writes a recovery plan (`recovery-plan.json` and
+`recovery-plan.md`) listing each unresolved fact and the evidence that would
+settle it.
+
+## Track Windows builds
+
+```powershell
+& $wd record-build ir\dwmapi.json --history history
+& $wd diff ir\old\dwmapi.json ir\new\dwmapi.json --json-out changes.json --markdown-out changes.md
+```
+
+The history layout is plain files, so it can be served from any static host:
 
 ```text
 history/index.json
 history/<target>/index.json
 history/<target>/builds/<timestamp-guid-age>/ir.json
-history/<target>/changes/<old-key>__<new-key>.json
-history/<target>/changes/<old-key>__<new-key>.md
+history/<target>/changes/<old>__<new>.json
+history/<target>/changes/<old>__<new>.md
 ```
 
-The root `index.json` catalogs every target and links to its target index. Each
-target `index.json` lists builds in observation order,
-the latest build, links to each immutable IR and adjacent diff, and embeds a
-change summary. Diff JSON separates additions/removals from signature,
-implementation, call-graph, import, size, kind, export-status, and RVA changes.
-RVA movement is recorded independently so consumers can distinguish address
-churn from behavioral changes.
+Diffs separate added and removed symbols from signature, implementation,
+call-graph, import, size and export changes. RVA moves are tracked on their
+own, so address churn doesn't look like a behavior change.
 
-## Analyze the Windows internals fleet
+## Run the whole fleet
 
-The Go orchestrator finds the curated System32 targets, performs a metadata-only
-pass, downloads the exact PDB from Microsoft's symbol server into a GUID+age
-cache, repeats extraction with symbols, and emits per-target headers.
+`windissect-fleet` processes a list of binaries in one go: it finds each one
+on your machine, downloads the exact PDB from Microsoft's symbol server,
+extracts, verifies, records history and generates headers and Rust crates.
+Runs are incremental, so after a Windows update the same command picks up only
+what changed.
 
 ```powershell
+cargo build --release
 go build -o bin\windissect-fleet.exe .\cmd\windissect
-bin\windissect-fleet.exe --extractor target\release\windissect.exe pull
-bin\windissect-fleet.exe --extractor target\release\windissect.exe emit
+
+# small test run
+bin\windissect-fleet.exe --root corpus --manifest manifests\example.json
+
+# the built-in Windows UI list (33 targets, large PDB downloads the first time)
+bin\windissect-fleet.exe --root corpus
 ```
 
-Microsoft binaries and PDBs are not distributed by this repository.
+What it processes is controlled by a JSON manifest. See
+[docs/fleet.md](docs/fleet.md) for the manifest format, commands, output layout
+and troubleshooting, or run `bin\windissect-fleet.exe help`.
 
-## Status
+This repository doesn't include any Microsoft binaries or PDBs.
 
-Version 0.1.0 includes the generic PE/PDB IR, multi-target fleet, PE-native
-RTTI/vftable recovery, proof-gated MSVC x64 semantic layouts, separate
-verified/candidate C++ and Rust output, conservative layout observations,
-evidence/proof graph, and per-build semantic diffing.
-DUI70 is the deep validation corpus; AMSI is the small unrelated reproducible
-case. Layout claims without certified proof remain experimental and are not
-promoted into callable declarations. Release evidence and artifact hashes are
-recorded in [RELEASE.md](RELEASE.md).
+## Documentation
 
-The included x64 member-access evidence pack is deliberately marked `draft`;
-its observations remain metadata-only until the documented cross-binary corpus
-gate is satisfied.
-
-The owned semantic fixture measures exact-build class, union, bitfield,
-inheritance, vtable, and enum facts with `score-semantic`; its current oracle
-requires at least 99.9% precision. Typedef aliases are withheld because the
-current PDB parser does not expose CodeView `LF_ALIAS` records. Runtime probing
-is opt-in, isolated, exact-build checked, and DLL-only. Discovered functions
-are never invoked automatically: verified addressability and ABI do not prove
-process initialization, thread state, purity, or safe side effects. Runtime
-calls require an explicit `--probe-manifest`, and each operation runs in its
-own disposable helper so a crash or timeout becomes a negative observation
-without discarding successful independent probes. SYS analysis remains static.
-
-Generated trees, downloaded Microsoft binaries/PDBs, IDA databases, and the
-143.2 MiB canonical DUI70 IR are deliberately excluded from Git. This avoids
-mixing stale outputs with source. The verified local artifact and its expected
-release-asset hash are documented in `RELEASE.md`.
+- [Architecture](docs/architecture.md): pipeline, trust rules, module map
+- [Output status](docs/output-status.md): what counts as verified and what doesn't
+- [Quick start](docs/quickstart.md): AMSI and DUI70 walkthroughs
+- [Fleet runs](docs/fleet.md): manifests, batch runs, output layout
+- [Known issues](docs/known-issues.md)
+- [Release notes](RELEASE.md)
 
 ## License
 
 Windissect is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
-For commercial licensing (using Windissect in closed-source products or
-services without AGPL obligations), contact raze.crs@proton.me.
+For a commercial license (using Windissect in closed-source products or
+services without the AGPL terms), contact raze.crs@proton.me.

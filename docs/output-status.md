@@ -1,35 +1,33 @@
 # Output status
 
-Windissect uses two independent labels: epistemic status (what the evidence
-supports) and usability (what an emitter may safely expose).
+Every fact has two labels: how well the evidence supports it, and whether an
+emitter is allowed to expose it as usable code.
 
 ## Verified
 
-- PE/PDB identity and binary build anchors
-- exports, ordinals, forwarders, and identity-matched PDB procedure names
-- schema-v3 graph integrity and satisfied proof obligations
-- architecture-aware x86/x64 instruction decoding
-- compatible vftable slots and explicitly supported call helpers
-- artifacts written by `emit-evidence` to `verified.json`
-- identity-matched full-PDB class sizes, field widths/offsets, bitfields,
-  inheritance offsets, virtual-slot order, and enum values/underlying types
-  after semantic compiler validation
-- the primary generated `<target>.h`, which contains only verified ABI
-  metadata and proof-gated call/vcall helpers
+- PE/PDB identity and build anchors
+- exports, ordinals, forwarders, and procedure names from a matching PDB
+- IR graph integrity and passed proof obligations
+- x86/x64 instruction decoding
+- compatible vftable slots and the call helpers built on them
+- `verified.json` from `emit-evidence`
+- class sizes, field offsets and widths, bitfields, inheritance offsets,
+  virtual slot order, and enum values and underlying types from a full
+  matching PDB, after the compiler check passes
+- the primary `<target>.h`, which contains only verified ABI metadata and
+  proven call helpers
 
-## Experimental or metadata-only
+## Candidate or metadata-only
 
-- heuristic member offsets without a certified cross-binary evidence pack
-- reflection-property observations that have not been corroborated
-- template-derived base candidates without proven offsets
-- incompatible ICF/vftable candidates
-- imported IDA/r2 observations before an analyzer proves the corresponding
-  high-level claim
-- CodeView aliases (`LF_ALIAS`) until parser support is added
+- heuristic member offsets without a certified evidence pack
+- reflection properties that haven't been corroborated
+- template-derived base classes without proven offsets
+- incompatible ICF or vftable candidates
+- IDA/r2 observations until an analyzer proves the higher-level claim
+- CodeView aliases (`LF_ALIAS`), which the PDB parser doesn't read yet
 - ARM64 and ARM64EC semantic recovery
-- SYS runtime probing; SYS static extraction and semantic emission are supported
-- exhaustive `<target>_candidates.h` class declarations until their individual
-  language, ownership, layout, and signature obligations are proven
+- runtime probing of SYS files (static SYS analysis is supported)
+- class declarations in `<target>_candidates.h`
 
-Experimental data remains useful for reversing and annotated assembly, but it
-must not be described as an ABI-safe declaration.
+Candidate data is still useful for reversing and in annotated assembly. It just
+isn't presented as an ABI-safe declaration.

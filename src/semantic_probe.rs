@@ -228,8 +228,7 @@ pub fn run_isolated(binary: &Path, manifest: &Path, out: &Path, timeout_ms: u64)
     let scratch = std::env::temp_dir().join(format!(
         "windissect-probe-{}-{}",
         std::process::id(),
-        crate::hex::lower(&Sha256::digest(manifest.as_os_str().as_encoded_bytes()))[..12]
-            .to_string()
+        &crate::hex::lower(&Sha256::digest(manifest.as_os_str().as_encoded_bytes()))[..12]
     ));
     std::fs::create_dir_all(&scratch)?;
 
@@ -283,13 +282,15 @@ pub fn run_isolated(binary: &Path, manifest: &Path, out: &Path, timeout_ms: u64)
             observations.extend(result.observations);
         } else {
             failed += 1;
-            let (status, detail) = match status {
-                Some(value) => ("crashed", format!("isolated helper failed with {value}")),
-                None => (
-                    "timed-out",
-                    format!("isolated helper exceeded {timeout_ms} ms"),
-                ),
-            };
+            let (status, detail) = status.map_or_else(
+                || {
+                    (
+                        "timed-out",
+                        format!("isolated helper exceeded {timeout_ms} ms"),
+                    )
+                },
+                |value| ("crashed", format!("isolated helper failed with {value}")),
+            );
             eprintln!("semantic probe {operation_id}: {detail}");
             observations.push(ProbeObservation {
                 id: operation_id,

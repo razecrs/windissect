@@ -748,7 +748,7 @@ fn configure_instruction_retention(db: &mut Database, retain: bool) {
     });
 }
 
-/// CRT/STL/ETW boilerplate — real code, but not the target's own.
+/// CRT/STL/ETW boilerplate: real code, but not the target's own.
 pub(crate) fn is_library(mangled: &str, demangled: Option<&str>) -> bool {
     const DECORATED_MARKERS: &[&str] = &[
         "_tlg",

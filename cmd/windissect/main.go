@@ -23,46 +23,51 @@ import (
 var symbolServer = "https://msdl.microsoft.com/download/symbols"
 var pdbMagic = []byte("Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00")
 
-var targetDLLs = []string{
-	// 1. Desktop Window Manager & Composition
-	"uDWM.dll",
-	"dwmcore.dll",
-	"dwmapi.dll",
-	"dcomp.dll",
-	"duser.dll",
-	// 2. DirectUI & Classic Shell Controls
-	"dui70.dll",
-	"ExplorerFrame.dll",
-	"shell32.dll",
-	"shlwapi.dll",
-	"comctl32.dll",
-	"uxtheme.dll",
-	"user32.dll",
-	// 3. Immersive Shell & Modern Taskbar/Start
-	"twinui.dll",
-	"twinui.pcshell.dll",
-	"taskbar.dll",
-	"StartDocked.dll",
-	"twinapi.dll",
-	"twinapi.appcore.dll",
-	// 4. WinUI 2 / WinUI 3 / XAML & App SDK
-	"windows.ui.xaml.dll",
-	"Microsoft.ui.xaml.dll",
-	"Microsoft.UI.Windowing.Core.dll",
-	// 5. Control Center, Flyouts, Notifications & System Tray
-	"SndVolSSO.dll",
-	"ControlCenter.dll",
-	"ActionCenter.dll",
-	"pnidui.dll",
-	// 6. Virtual Desktops, Input & Message Routing
-	"inputhost.dll",
-	"CoreMessaging.dll",
-	"textinputframework.dll",
-	// 7. Native Inbox Apps & File Dialogs
-	"windows.storage.dll",
-	"shellcommon.dll",
-	"SystemSettings.View.dll",
-	"Taskmgr.dll",
+// builtinTargets is the built-in Windows UI corpus used when no --manifest is
+// given. Required targets ship with every Windows 11 install; optional ones
+// depend on the edition, build or installed app packages and are skipped when
+// absent. manifests/windows-ui.json mirrors this list.
+var builtinTargets = []targetSpec{
+	// Desktop Window Manager and composition
+	{ID: "uDWM", File: "uDWM.dll", Area: "dwm", Required: true},
+	{ID: "dwmcore", File: "dwmcore.dll", Area: "dwm", Required: true},
+	{ID: "dwmapi", File: "dwmapi.dll", Area: "dwm", Required: true},
+	{ID: "dcomp", File: "dcomp.dll", Area: "dwm", Required: true},
+	{ID: "duser", File: "duser.dll", Area: "dwm", Required: true},
+	// DirectUI and classic shell controls
+	{ID: "dui70", File: "dui70.dll", Area: "shell", Required: true},
+	{ID: "ExplorerFrame", File: "ExplorerFrame.dll", Area: "shell", Required: true},
+	{ID: "shell32", File: "shell32.dll", Area: "shell", Required: true},
+	{ID: "shlwapi", File: "shlwapi.dll", Area: "shell", Required: true},
+	{ID: "comctl32", File: "comctl32.dll", Area: "shell", Required: true},
+	{ID: "uxtheme", File: "uxtheme.dll", Area: "shell", Required: true},
+	{ID: "user32", File: "user32.dll", Area: "shell", Required: true},
+	// Immersive shell, taskbar and Start
+	{ID: "twinui", File: "twinui.dll", Area: "taskbar", Required: true},
+	{ID: "twinui.pcshell", File: "twinui.pcshell.dll", Area: "taskbar", Required: true},
+	{ID: "taskbar", File: "taskbar.dll", Area: "taskbar", Required: true},
+	{ID: "twinapi", File: "twinapi.dll", Area: "taskbar", Required: true},
+	{ID: "twinapi.appcore", File: "twinapi.appcore.dll", Area: "taskbar", Required: true},
+	{ID: "Taskbar.View", File: "Taskbar.View.dll", Source: "client-core-system-app", Area: "taskbar"},
+	{ID: "StartDocked", File: "StartDocked.dll", Source: "start-menu-system-app", Area: "start"},
+	// XAML and Windows App SDK
+	{ID: "windows.ui.xaml", File: "windows.ui.xaml.dll", Area: "xaml", Required: true},
+	{ID: "Microsoft.ui.xaml", File: "Microsoft.ui.xaml.dll", Source: "windows-app-runtime-x64", Area: "xaml"},
+	{ID: "Microsoft.UI.Windowing.Core", File: "Microsoft.UI.Windowing.Core.dll", Source: "windows-app-runtime-x64", Area: "xaml"},
+	// Flyouts, notifications and tray
+	{ID: "SndVolSSO", File: "SndVolSSO.dll", Area: "tray", Required: true},
+	{ID: "ControlCenter", File: "ControlCenter.dll", Area: "tray"},
+	{ID: "ActionCenter", File: "ActionCenter.dll", Area: "tray"},
+	{ID: "pnidui", File: "pnidui.dll", Area: "tray"},
+	// Input and message routing
+	{ID: "InputHost", File: "inputhost.dll", Area: "input", Required: true},
+	{ID: "CoreMessaging", File: "CoreMessaging.dll", Area: "input", Required: true},
+	{ID: "TextInputFramework", File: "textinputframework.dll", Area: "input", Required: true},
+	// Storage, settings and inbox apps
+	{ID: "windows.storage", File: "windows.storage.dll", Area: "storage", Required: true},
+	{ID: "shellcommon", File: "shellcommon.dll", Area: "storage"},
+	{ID: "SystemSettings.View", File: "SystemSettings.View.dll", Area: "settings"},
+	{ID: "Taskmgr", File: "Taskmgr.dll", Area: "apps"},
 }
 
 type targetSpec struct {
@@ -388,6 +393,11 @@ func resolveTargetPath(target targetSpec, windowsDir, probeDir string) string {
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			return candidate
 		}
+	case "client-core-system-app":
+		candidate := filepath.Join(windowsDir, "SystemApps", "MicrosoftWindows.Client.Core_cw5n1h2txyewy", target.File)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
 	case "start-menu-system-app":
 		candidate := filepath.Join(windowsDir, "SystemApps", "Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy", target.File)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
@@ -600,15 +610,8 @@ func emitAllOutputs(baseDir, exePath string) error {
 }
 
 func defaultTargets() []targetSpec {
-	targets := make([]targetSpec, 0, len(targetDLLs))
-	for _, file := range targetDLLs {
-		targets = append(targets, targetSpec{
-			ID:       strings.TrimSuffix(file, filepath.Ext(file)),
-			File:     file,
-			Source:   "system32",
-			Required: true,
-		})
-	}
+	targets := make([]targetSpec, len(builtinTargets))
+	copy(targets, builtinTargets)
 	return targets
 }
 
@@ -681,11 +684,11 @@ func writeCorpusReport(root string, index corpusIndex) error {
 	report.WriteString("| Target | Binary | Status | PDB identity | Binary SHA-256 |\n")
 	report.WriteString("|---|---|---|---|---|\n")
 	for _, target := range index.Targets {
-		pdbIdentity := "—"
+		pdbIdentity := "-"
 		if target.PDBGuid != "" {
 			pdbIdentity = fmt.Sprintf("`%s+%X`", target.PDBGuid, target.PDBAge)
 		}
-		sha := "—"
+		sha := "-"
 		if target.SHA256 != "" {
 			sha = "`" + target.SHA256 + "`"
 		}
@@ -831,7 +834,41 @@ func reusableResult(result corpusResult, sourcePath string) bool {
 	return err == nil && strings.EqualFold(hash, result.SHA256)
 }
 
+const usage = `windissect-fleet: batch extraction for a set of Windows binaries
+
+Usage:
+  windissect-fleet [options] [all|pull|emit] [binary ...]
+
+Commands:
+  all     pull, then emit (default)
+  pull    for each target: extract, fetch the exact PDB from Microsoft's
+          symbol server, extract again with it, verify, record build history
+  emit    write C/C++ headers and a Rust crate for every IR in <root>\ir
+  help    show this message
+
+Targets:
+  With no --manifest and no binary arguments, the built-in Windows UI list
+  is used (see manifests/windows-ui.json). Binary arguments replace the list
+  for that run: a bare file name is looked up in System32, a path is used as
+  given.
+
+Options:
+  --extractor PATH  windissect.exe to run (default: target\release\windissect.exe)
+  --root DIR        where ir, probe, history, headers and rust are written
+                    (default: the repository root)
+  --manifest FILE   JSON target list, see docs/fleet.md
+  --only IDS        comma-separated target ids from the list to process
+
+Exit status is 1 if a required target is missing or fails.
+`
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "help" || arg == "-h" || arg == "--help" {
+			fmt.Print(usage)
+			return
+		}
+	}
 	exePath, err := os.Executable()
 	if err != nil {
 		exePath = "."

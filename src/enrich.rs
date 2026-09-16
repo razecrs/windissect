@@ -1,4 +1,4 @@
-//! Phase C: Static Enrichment — disassembly, reloc-normalized body hashing,
+//! Phase C: Static Enrichment: disassembly, reloc-normalized body hashing,
 //! call-graph construction, function size calculation, and Win32 import tracking.
 
 use crate::model::{
