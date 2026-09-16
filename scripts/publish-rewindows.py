@@ -28,6 +28,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HISTORY = os.path.join(ROOT, "history")
 HEADERS = os.path.join(ROOT, "headers")
+RUST = os.path.join(ROOT, "rust")
 ORG = "ReWindows"
 GITHUB_FILE_LIMIT = 100 * 1024 * 1024
 # An empty record is a few KB; a real one is hundreds of MB.
@@ -53,7 +54,7 @@ def local_targets():
                   if os.path.isdir(os.path.join(HISTORY, d)))
 
 
-def header_dirs():
+def output_dirs(root):
     """Map a history target name to its emitted header directory.
 
     The two are named differently: history uses the binary's own name
@@ -75,9 +76,9 @@ def header_dirs():
         return name.lower().replace(".", "").replace("-", "").replace("_", "")
 
     available = {}
-    if os.path.isdir(HEADERS):
-        for d in os.listdir(HEADERS):
-            if os.path.isdir(os.path.join(HEADERS, d)):
+    if os.path.isdir(root):
+        for d in os.listdir(root):
+            if os.path.isdir(os.path.join(root, d)):
                 available[normalise(d)] = d
 
     def resolve(target):
@@ -85,13 +86,13 @@ def header_dirs():
         for candidate in (wanted, target):
             hit = available.get(normalise(candidate))
             if hit:
-                return os.path.join(HEADERS, hit)
+                return os.path.join(root, hit)
         return None
 
     return resolve
 
 
-def stage(target, workdir, resolve_headers=None):
+def stage(target, workdir, resolve_headers=None, resolve_rust=None):
     """Copy one target's history and headers into a repo tree.
 
     History is gzipped; headers are plain C++ and small enough to read in
@@ -183,25 +184,40 @@ def stage(target, workdir, resolve_headers=None):
             len([f for f in files if f.endswith(".h")])
             for _, _, files in os.walk(os.path.join(workdir, "headers")))
 
+    # Rust bindings, same idea: generated from the same IR, readable in place.
+    rust_count = 0
+    rust_source = resolve_rust(target) if resolve_rust else None
+    if rust_source and os.path.isdir(rust_source):
+        shutil.copytree(rust_source, os.path.join(workdir, "rust"), dirs_exist_ok=True)
+        rust_count = sum(
+            len([f for f in files if f.endswith(".rs")])
+            for _, _, files in os.walk(os.path.join(workdir, "rust")))
+
+    blurb = []
     if header_count:
-        readme[3:3] = [f"`headers/` carries {header_count} recovered C++ class headers.", ""]
+        blurb.append(f"`headers/` carries {header_count} recovered C++ class headers.")
+    if rust_count:
+        blurb.append(f"`rust/` carries generated Rust bindings ({rust_count} source files).")
+    if blurb:
+        readme[3:3] = blurb + [""]
 
     open(os.path.join(workdir, "README.md"), "w", encoding="utf-8").write("\n".join(readme) + "\n")
-    return raw_total, gz_total, len(builds), skipped, header_count
+    return raw_total, gz_total, len(builds), skipped, header_count, rust_count
 
 
-def publish(target, existing, resolve_headers, dry_run=False):
+def publish(target, existing, resolve_headers, resolve_rust, dry_run=False):
     repo = f"{ORG}/{target}"
     workdir = tempfile.mkdtemp(prefix="rewindows-")
     try:
-        raw, gz, count, skipped, headers = stage(target, workdir, resolve_headers)
+        raw, gz, count, skipped, headers, rust = stage(
+            target, workdir, resolve_headers, resolve_rust)
         for build, size in skipped:
             print(f"  {target:<44} SKIPPED empty record {build} ({size} bytes)")
-        if not count and not headers:
+        if not count and not headers and not rust:
             print(f"  {target:<44} nothing to publish")
             return True
         ratio = (raw / gz) if gz else 0
-        print(f"  {target:<44} {count} build(s)  {raw/1e6:>8.1f} MB -> {gz/1e6:>6.1f} MB  ({ratio:.0f}x)  {headers} headers")
+        print(f"  {target:<44} {count} build(s)  {raw/1e6:>8.1f} MB -> {gz/1e6:>6.1f} MB  ({ratio:.0f}x)  {headers} headers  {rust} rust")
         if dry_run:
             return True
 
@@ -260,8 +276,10 @@ def main():
         print("pass --only NAME, --all, or --list", file=sys.stderr)
         return 2
 
-    resolve_headers = header_dirs()
-    ok = sum(publish(t, existing, resolve_headers, args.dry_run) for t in targets)
+    resolve_headers = output_dirs(HEADERS)
+    resolve_rust = output_dirs(RUST)
+    ok = sum(publish(t, existing, resolve_headers, resolve_rust, args.dry_run)
+             for t in targets)
     print(f"\n{ok}/{len(targets)} published")
     return 0 if ok == len(targets) else 1
 
