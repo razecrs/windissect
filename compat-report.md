@@ -1,13 +1,13 @@
 # Windissect compatibility corpus
 
-Generated: `2026-09-16T19:25:49.4304886Z`  
+Generated: `2026-09-16T21:02:18.1349139Z`  
 Windows build: `10.0.26200`  
 Architecture: `AMD64`  
 Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2FF0C`
 
-- Exact-build PDB verified: 125
+- Exact-build PDB verified: 148
 - Static-only verified: 2
-- Required failures: 27
+- Required failures: 28
 - Optional failures/unavailable: 4
 
 | Target | Binary | Status | PDB identity | Binary SHA-256 |
@@ -170,3 +170,27 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `wintrust` | `WINTRUST.dll` | `verified-pdb` | `79420CA7BA8D140B549434332A96709A+1` | `1fabae0284fa498f92ac83f10e928ab7dcefb42e50198e913291d37b496b7e40` |
 | `wtsapi32` | `WTSAPI32.dll` | `verified-pdb` | `E1B14D967968BCE67CEC223811A868B0+1` | `2fba19e8bedfee7508ebc5113ca2e6415b779db1fd0bd5f17f4d03811d7958ca` |
 | `wuceffects` | `wuceffects.dll` | `verified-pdb` | `3F75F31E7F793D78BC1B22C5E46B1BF6+1` | `681c6fce8747d6534a2ed980e3f67959ac245014a7fd7ed256af06ed55e84fbd` |
+| `microsoft-ui-xaml` | `C:\WINDOWS\SystemApps\Microsoft.UI.Xaml.CBS_8wekyb3d8bbwe\Microsoft.UI.Xaml.dll` | `verified-pdb` | `16232D22E812911F17AC5497546227D8+1` | `97f9ad1b0005dc96b5064c5d0fc1638fa3e6f52ee18f8707b7bc45fe26e0be5a` |
+| `irisservice` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\IrisService.dll` | `verified-pdb` | `D3311E2334B74D14A4D2EA950AC3324B+1` | `01613343fb405c75c71c075e20e7c1bdab235c4de42f813f30d1531ee560fe36` |
+| `osclient-uwp` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\OSClient.UWP.dll` | `verified-pdb` | `9DED081B06CC4545801702DCAB7F8EBB+1` | `29ef9cf113fe23ce29f1ac71e5236a5fa8486ad387d58f7136f67a38b36067c2` |
+| `startmenu` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\StartMenu.dll` | `verified-pdb` | `BAC8F3B13B5B4EC7B6E68AF0E8EF8EEE+1` | `d7a647286bbbb5ee33ef794382a8fbf33681fb1279d84095c3fa1068eabe31ae` |
+| `startmenu-net` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\StartMenu.NET.dll` | `verified-pdb` | `CE90A10D2ABF466EBD18482B9547DF1E+1` | `5464f42d07e6daa52fa332d238db0804ce16bd21b55c1509c06759a93c7d4482` |
+| `msvcp140_app` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy\MSVCP140_APP.dll` | `verified-pdb` | `B6879717EF6847D146F8D6BBEBC0EE5F+1` | `40d3e4997d76ee34c3c3b276dc146b9feb8b7ac0032d2adccce1e81e481c9381` |
+| `vcruntime140_1_app` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy\VCRUNTIME140_1_APP.dll` | `verified-pdb` | `DEA80AAD30F78332E13F19ACC2118F9C+1` | `db894749cf8c88fe40057bb486415ca7f7a5988e7fa593070266682a93d9d858` |
+| `vcruntime140_app` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.CoreAI_cw5n1h2txyewy\VCRUNTIME140_APP.dll` | `verified-pdb` | `B6B531D6D57ABADB2F50FEFF165A9674+1` | `b8acc56e87437e2dfbb6dfac36b99ee41562da1727dbc95535c2cd8ed3a538ad` |
+| `clipboard` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\Clipboard.dll` | `verified-pdb` | `E92BA24509804DEA8495C9E3F0F0036F+1` | `e12775d0121096f76bf70426928dde6394d0dcb11754cb814536ee3bff62c57a` |
+| `experienceextensions` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\ExperienceExtensions.dll` | `verified-pdb` | `266B70BEF7E44555B621980F13905B74+1` | `4941ac6b7eda45bdc07b32e4be9606565b0e0ae9bc6265b33b8e68b08450c975` |
+| `hermes` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\hermes.dll` | `verified-pdb` | `8DDF078B0DA4408089E7C626A3732CC3+1` | `8596703422f9d2554e8acfe001acf8e74fb01a62267fcdd3b3353bb9c2180f5f` |
+| `microsoft-reactnative` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\Microsoft.ReactNative.dll` | `verified-pdb` | `00CBD41B4937412DB6C7E0F17B7A37DA+1` | `80ea08ce5acaacd02dfd78db98529360a584a09c054a9d2bdbd81915e2c8cdc7` |
+| `payments` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\Payments.dll` | `verified-pdb` | `8A709A37A54A46F884527564FB25DCDA+1` | `4dba8f2b923c55afdb49217eb7efb2f5719cd8db519e0f589b3bad73f79f1230` |
+| `reactnativexaml` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\ReactNativeXaml.dll` | `verified-pdb` | `8A433F046FB24528AB340DF0C6C1707C+1` | `13e50464da75da4e4187b865c83749fad26b1927afec1517821081c0bcae3d4b` |
+| `ux-phui` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\ux-phui.dll` | `verified-pdb` | `2DCF3EABB4B84E9F9AAA489E3F88FEDB+1` | `f6bd3837230fb45dbb3b80d8ae72911fef9345adacfaa7ea113fa39727a15148` |
+| `winrtcomponents` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\WinRTComponents.dll` | `verified-pdb` | `61DA4514B3F34CB7933FE58C69E7AE1A+1` | `734e5e67e8e6156ac468d11691aea7bf35d31b15b82342ae298aa66c648bda0e` |
+| `winrtturbomodule` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\WinRTTurboModule.dll` | `verified-pdb` | `8DCB03A4805C49AD8E9E07FB057822D5+1` | `614eebc920741cd86ec35239acfe0b1aa20567f8411eb7ff67a643a12f282c8a` |
+| `wsxpackmanager` | `C:\Windows\SystemApps\MicrosoftWindows.Client.Photon_cw5n1h2txyewy\WsxPackManager.dll` | `verified-pdb` | `AE385BDBF68B4357B5C9DA40A513FDC7+1` | `7a688766522512ae21ae0f326b49195e6de120429cfd9ea6656e538431db416c` |
+| `devicesflowui` | `C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\DevicesFlowUI.dll` | `verified-pdb` | `6B199400FD3F8D4714DF4BE7F25450C1+1` | `fb93260e61749956d2d17052d8f3505ab65bf99c74faf862b62ff3c57e9853d5` |
+| `shellexperiencehost` | `C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe` | `verified-pdb` | `B414E7EDF725912585004E7771E1873F+1` | `9d6d7b37ba8f6db67c3c33111ab32842abb5b4a940ff61c106899b4be5ecfc00` |
+| `windows-ui-actioncenter` | `C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\Windows.UI.ActionCenter.dll` | `verified-pdb` | `C0DAB2D26B6BB2465AEC9970A6EE6AC5+1` | `a82314d0b4feedba77cb4e2787b1619726df853bcac5cf5aa97150e60306ee7e` |
+| `windows-ui-quickactions` | `C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\Windows.UI.QuickActions.dll` | `verified-pdb` | `AC9E6245F50A4CF857F159429404017B+1` | `90c5e0934506a8537050f133b1c5a638dcf99d976cee7c0c6db3ded133a873c2` |
+| `gdiplus` | `C:\WINDOWS\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.26100.9444_none_6ef568883dc4f9e8\gdiplus.dll` | `verified-pdb` | `DDF19AA09F285660C86065C38EF751A4+1` | `ce338c682031358a3f599430b6c7f3baa80a72ae392e8a885489bb02a5231a8c` |
+| `WindowsInternal.ComposableShell.DesktopHosting` | `C:/Windows/SystemApps/MicrosoftWindows.Client.Core_cw5n1h2txyewy/WindowsInternal.ComposableShell.DesktopHosting.dll` | `failed-required` | — | — |
