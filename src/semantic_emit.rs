@@ -2,6 +2,7 @@
 
 use crate::model::{Database, SemanticClass, SemanticStatus};
 use anyhow::Result;
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -162,8 +163,17 @@ fn verified_cpp(
         let name = sanitize(&item.qualified_name);
         let underlying = cpp_integer_type(item.underlying_type.as_deref().unwrap_or("i64"));
         let _ = writeln!(out, "enum class {name} : {underlying} {{");
+        let mut seen = BTreeSet::new();
         for value in &item.values {
-            let _ = writeln!(out, "    {} = {},", sanitize(&value.name), value.value);
+            let label = sanitize(&value.name);
+            if !seen.insert(label.clone()) {
+                continue;
+            }
+            let enum_value = project_enum_value(
+                item.underlying_type.as_deref().unwrap_or("i64"),
+                value.value,
+            );
+            let _ = writeln!(out, "    {label} = {enum_value},");
         }
         out.push_str("};\n\n");
     }
@@ -303,19 +313,35 @@ fn candidate_cpp(
 
 fn emit_layout(out: &mut String, class: &SemanticClass) {
     let Some(size) = class.size else { return };
+    if size == 0 {
+        return;
+    }
     let name = sanitize(&class.qualified_name);
     if class.kind == "union" {
         let _ = writeln!(out, "union {name}_layout {{");
+        let mut max_width = 0u64;
+        let mut written = false;
         for (index, field) in class.fields.iter().enumerate() {
-            if field.status != SemanticStatus::Verified || field.width == 0 || field.structural_only
+            if field.status != SemanticStatus::Verified
+                || field.width == 0
+                || field.structural_only
             {
+                continue;
+            }
+            let width = u64::from(field.width).min(size);
+            if width == 0 {
                 continue;
             }
             let label = field
                 .name
                 .as_deref()
                 .map_or_else(|| format!("field_{index}"), sanitize);
-            let _ = writeln!(out, "    std::byte {label}[0x{:X}];", field.width);
+            let _ = writeln!(out, "    std::byte {label}[0x{width:X}];");
+            written = true;
+            max_width = max_width.max(width);
+        }
+        if !written || max_width < size {
+            let _ = writeln!(out, "    std::byte _windissect_tail[0x{size:X}];");
         }
         out.push_str("};\n");
         let _ = writeln!(out, "static_assert(sizeof({name}_layout) == 0x{size:X});");
@@ -330,6 +356,7 @@ fn emit_layout(out: &mut String, class: &SemanticClass) {
             || field.width == 0
             || field.structural_only
             || field.offset < cursor
+            || field.offset >= size
         {
             continue;
         }
@@ -345,9 +372,10 @@ fn emit_layout(out: &mut String, class: &SemanticClass) {
             .as_deref()
             .map_or_else(|| format!("field_{index}"), sanitize);
         let label = format!("{label_base}_{index}");
-        let _ = writeln!(out, "    std::byte {label}[0x{:X}];", field.width);
+        let width = u64::from(field.width).min(size - field.offset);
+        let _ = writeln!(out, "    std::byte {label}[0x{width:X}];");
         emitted.push((label, field.offset));
-        cursor = field.offset + u64::from(field.width);
+        cursor = field.offset + width;
     }
     if size > cursor {
         let _ = writeln!(out, "    std::byte _tail_padding[0x{:X}];", size - cursor);
@@ -452,13 +480,18 @@ fn emit_rust(
             "#[repr(transparent)]\n#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub struct {name}(pub {underlying});"
         );
         let _ = writeln!(lib, "impl {name} {{");
+        let mut seen = BTreeSet::new();
         for (index, value) in item.values.iter().enumerate() {
+            let value_label = sanitize(&value.name);
+            if !seen.insert(value_label.clone()) {
+                continue;
+            }
             let label = format!(
                 "VALUE_{}_{}",
-                sanitize(&value.name).to_ascii_uppercase(),
+                value_label.to_ascii_uppercase(),
                 index
             );
-            let _ = writeln!(lib, "    pub const {label}: Self = Self({});", value.value);
+            let _ = writeln!(lib, "    pub const {label}: Self = Self({});", project_enum_value(underlying, value.value));
         }
         lib.push_str("}\n\n");
     }
@@ -467,15 +500,19 @@ fn emit_rust(
         let name = sanitize(&class.qualified_name);
         if class.kind == "union" {
             let _ = writeln!(lib, "#[repr(C)]\npub union {name}_layout {{");
+            let mut written = false;
+            let mut max_width: u64 = 0;
             for (index, field) in class.fields.iter().enumerate() {
                 if field.structural_only {
                     continue;
                 }
-                let label = field
-                    .name
-                    .as_deref()
-                    .map_or_else(|| format!("field_{index}"), sanitize);
+                let label = rust_ident(field.name.as_deref().unwrap_or("").to_string(), index);
                 let _ = writeln!(lib, "    pub {label}: [u8; 0x{:X}],", field.width);
+                written = true;
+                max_width = max_width.max(u64::from(field.width));
+            }
+            if !written || max_width < size {
+                let _ = writeln!(lib, "    pub _windissect_tail: [u8; 0x{size:X}],");
             }
             lib.push_str("}\n");
         } else {
@@ -603,6 +640,58 @@ fn cpp_integer_type(name: &str) -> &'static str {
         "u32" => "std::uint32_t",
         "u64" => "std::uint64_t",
         _ => "std::int64_t",
+    }
+}
+
+/// Project an enum value into the declared underlying type's representation.
+/// CodeView records enumerators with the enum's underlying width and
+/// signedness, so a value may only be representable after wrapping into that
+/// type's range (e.g. `-4093` stored as `4294963203` under an `i32`).
+fn project_enum_value(underlying: &str, value: i64) -> i64 {
+    let (bits, signed) = match underlying {
+        "i8" => (8, true),
+        "u8" => (8, false),
+        "i16" => (16, true),
+        "u16" => (16, false),
+        "i32" => (32, true),
+        "u32" => (32, false),
+        "i64" => (64, true),
+        "u64" => (64, false),
+        _ => return value,
+    };
+    let modulus: i128 = 1 << bits;
+    let wrapped: i128 = (value as i128).rem_euclid(modulus);
+    if signed {
+        let half = modulus >> 1;
+        if wrapped >= half {
+            (wrapped - modulus) as i64
+        } else {
+            wrapped as i64
+        }
+    } else {
+        wrapped as i64
+    }
+}
+
+/// Render a field name as a Rust identifier, escaping reserved keywords so
+/// the emitted union/struct member compiles as-is.
+fn rust_ident(name: String, index: usize) -> String {
+    const KEYWORDS: &[&str] = &[
+        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
+        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+        "return", "self", "Self", "static", "struct", "super", "trait", "true", "type", "unsafe",
+        "use", "where", "while", "async", "await", "dyn",
+    ];
+    let mut sanitized = name;
+    if sanitized.is_empty() {
+        sanitized = format!("field_{index}");
+    } else {
+        sanitized = sanitize(&sanitized);
+    }
+    if KEYWORDS.contains(&sanitized.as_str()) {
+        format!("r#{sanitized}")
+    } else {
+        sanitized
     }
 }
 

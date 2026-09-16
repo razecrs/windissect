@@ -313,10 +313,10 @@ func loadManifest(name string) ([]targetSpec, error) {
 		if target.ID == "" || target.File == "" {
 			return nil, fmt.Errorf("manifest target %d requires id and file", i)
 		}
-		if seen[target.ID] {
+		if seen[corpusKey(target.ID)] {
 			return nil, fmt.Errorf("duplicate manifest target id %q", target.ID)
 		}
-		seen[target.ID] = true
+		seen[corpusKey(target.ID)] = true
 	}
 	return manifest.Targets, nil
 }
@@ -883,17 +883,41 @@ func readCorpusIndex(root string) corpusIndex {
 	return index
 }
 
+// Target identity is case-insensitive.
+//
+// It was not, and "StartDocked" from one manifest sat in the index alongside
+// "startdocked" from another as two entries for one binary - so a stale
+// failed-required shadowed a fresh verified-pdb, and reuse never matched across
+// the two spellings. The --only filter already lowercased, which is exactly
+// what kept the mismatch invisible.
+func corpusKey(id string) string { return strings.ToLower(id) }
+
 func mergeCorpusResults(root string, updates []corpusResult) []corpusResult {
 	existing := readCorpusIndex(root).Targets
+
+	// Collapse duplicates a case-sensitive index already accumulated, keeping
+	// the verified entry rather than whichever happened to be written last.
+	deduped := existing[:0]
 	positions := make(map[string]int, len(existing))
-	for i := range existing {
-		positions[existing[i].ID] = i
+	for _, entry := range existing {
+		key := corpusKey(entry.ID)
+		if position, ok := positions[key]; ok {
+			if !strings.HasPrefix(deduped[position].Status, "verified-") {
+				deduped[position] = entry
+			}
+			continue
+		}
+		positions[key] = len(deduped)
+		deduped = append(deduped, entry)
 	}
+	existing = deduped
+
 	for _, update := range updates {
-		if position, ok := positions[update.ID]; ok {
+		key := corpusKey(update.ID)
+		if position, ok := positions[key]; ok {
 			existing[position] = update
 		} else {
-			positions[update.ID] = len(existing)
+			positions[key] = len(existing)
 			existing = append(existing, update)
 		}
 	}
@@ -934,7 +958,7 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 	results := make([]corpusResult, 0, len(targets))
 	prior := make(map[string]corpusResult)
 	for _, result := range readCorpusIndex(root).Targets {
-		prior[result.ID] = result
+		prior[corpusKey(result.ID)] = result
 	}
 	failed := false
 	for _, target := range targets {
@@ -951,7 +975,7 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 			results = append(results, result)
 			continue
 		}
-		if previous, ok := prior[target.ID]; ok && reusableResult(previous, result.SourcePath, shallow) {
+		if previous, ok := prior[corpusKey(target.ID)]; ok && reusableResult(previous, result.SourcePath, shallow) {
 			previous.SourcePath = result.SourcePath
 			previous.Required = target.Required
 			previous.Area = target.Area
