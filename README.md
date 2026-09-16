@@ -6,6 +6,16 @@ model is target-agnostic: DUI70 is the deep validation corpus, while AMSI
 exercises the generic PE/export path. The fleet orchestrator includes curated
 targets across DWM, composition, shell, taskbar, XAML, input, and storage.
 
+## The ReWindows corpus
+
+The output of Windissect runs is published per DLL in the
+[ReWindows](https://github.com/ReWindows) organization: `dwmcore`, `uDWM`,
+`dcomp`, `twinui`, `twinui.pcshell`, `comctl32`, `uxtheme`, `taskbar`, and
+more, over 130 repositories. Each carries a `history/` archive of every build
+observed, plus generated C/C++ headers and Rust FFI crates where the evidence
+supports them, so changes across Windows Updates can be diffed without running
+the tool yourself.
+
 ## What it produces
 
 - typed JSON IR for exports and private PDB procedures
@@ -147,4 +157,7 @@ release-asset hash are documented in `RELEASE.md`.
 
 ## License
 
-MIT
+Windissect is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+For commercial licensing (using Windissect in closed-source products or
+services without AGPL obligations), contact raze.crs@proton.me.
