@@ -1,14 +1,14 @@
 # Windissect compatibility corpus
 
-Generated: `2026-09-16T16:33:40.0473837Z`  
+Generated: `2026-09-16T19:25:49.4304886Z`  
 Windows build: `10.0.26200`  
 Architecture: `AMD64`  
 Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2FF0C`
 
-- Exact-build PDB verified: 13
+- Exact-build PDB verified: 125
 - Static-only verified: 2
-- Required failures: 31
-- Optional failures/unavailable: 0
+- Required failures: 27
+- Optional failures/unavailable: 4
 
 | Target | Binary | Status | PDB identity | Binary SHA-256 |
 |---|---|---|---|---|
@@ -24,9 +24,9 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `dwmapi` | `dwmapi.dll` | `failed-required` | — | — |
 | `dwmcorei` | `C:\WINDOWS\SystemApps\Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe\dwmcorei.dll` | `verified-pdb` | `D374FE9A431FDA4DDBC19286E805DACD+1` | `e11f98a4e2ee71802c3c85aa1ccc880a6cb114c66c8e25e6987942f8c72dd88a` |
 | `microsoft-ui-composition-ossupport` | `C:\WINDOWS\SystemApps\Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe\Microsoft.UI.Composition.OSSupport.dll` | `verified-pdb` | `7DAE910C92E7B693BE6715ACFED01342+1` | `3987e2e98db5805b96ccaeccefe17a790e780306d4e006a98555f3bd1ddfa3a0` |
-| `globinputhost` | `C:\WINDOWS\SYSTEM32\globinputhost.dll` | `verified-pdb` | `B0BAAD48B12C9140255D1ECF29A3DE87+1` | `4953efe66e6e56cf58e79a47fced7bd6f17e17140c196f5c130f383895114293` |
+| `globinputhost` | `globinputhost.dll` | `verified-pdb` | `B0BAAD48B12C9140255D1ECF29A3DE87+1` | `4953efe66e6e56cf58e79a47fced7bd6f17e17140c196f5c130f383895114293` |
 | `inputapp` | `C:\WINDOWS\SystemApps\SxS\MicrosoftWindows.61869836.InpApp_cw5n1h2txyewy\InputApp.dll` | `verified-pdb` | `97382E2898574854BA4E54B4B748AE5A+1` | `d33dfb67c52a0af70fcc8bf37ce54c98ed7f6a8a751e7a361eced569ee478d1e` |
-| `inputhost` | `inputhost.dll` | `failed-required` | — | — |
+| `inputhost` | `InputHost.dll` | `verified-pdb` | `ABCDD08862C83DBF2EE2F171207BBB2F+1` | `4e84bb64485a6be5226b0beb77154d207310dffe02d5fb157828d16783d7e46d` |
 | `inputswitch` | `C:\Windows\System32\InputSwitch.dll` | `verified-pdb` | `E8A3047D4426CA8EF5FC4F478CF759CE+1` | `124c85e2974ac0021cc02555be9f78b7c509d2bab5a165b49d367e182239731f` |
 | `uDWM` | `uDWM.dll` | `failed-required` | — | — |
 | `dwmcore` | `dwmcore.dll` | `failed-required` | — | — |
@@ -45,11 +45,11 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `Microsoft.ui.xaml` | `Microsoft.ui.xaml.dll` | `failed-required` | — | — |
 | `Microsoft.UI.Windowing.Core` | `Microsoft.UI.Windowing.Core.dll` | `failed-required` | — | — |
 | `SndVolSSO` | `SndVolSSO.dll` | `failed-required` | — | — |
-| `ControlCenter` | `ControlCenter.dll` | `failed-required` | — | — |
+| `controlcenter` | `ControlCenter.dll` | `verified-pdb` | `DF9EB504497489406F7BE1FFB9144D54+1` | `3e9a30bd1e92220baeeba90cd0ac409ae541c650019ad7c80aec97daf39c3261` |
 | `ActionCenter` | `ActionCenter.dll` | `failed-required` | — | — |
 | `pnidui` | `pnidui.dll` | `failed-required` | — | — |
-| `CoreMessaging` | `CoreMessaging.dll` | `failed-required` | — | — |
-| `textinputframework` | `textinputframework.dll` | `failed-required` | — | — |
+| `coremessaging` | `CoreMessaging.dll` | `verified-pdb` | `46238A8B3F58B1B4DFE8CF4CB68533C0+1` | `88c7b4d6ee26f7695de0885f39db2949ad77bffc20902b0d19fde7f7ad9d31bc` |
+| `textinputframework` | `TextInputFramework.dll` | `verified-pdb` | `34A2C0A7DA23212E70024181ADFB5B3C+1` | `70640d668839f52d89e7be41655559538b08181c57b6f4df1b2f76883261d75c` |
 | `windows.storage` | `windows.storage.dll` | `failed-required` | — | — |
 | `shellcommon` | `shellcommon.dll` | `failed-required` | — | — |
 | `SystemSettings.View` | `SystemSettings.View.dll` | `failed-required` | — | — |
@@ -58,3 +58,115 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `starttiledata` | `StartTileData.dll` | `verified-pdb` | `FE7C28895409E34E881F63B6AD9D629F+1` | `db48f49bb805369004bdcbb8e6dbb17cea7136631d96e350f3565823341863d3` |
 | `windowsudk-shellcommon` | `windowsudk.shellcommon.dll` | `verified-pdb` | `9822102D70F00C0B47429243D36A704F+1` | `ee6a83ed76e766069f0b30817e7a81862a0527d9059d2d903b3a89d6cbd5d1e4` |
 | `startmenuexperiencehost` | `StartMenuExperienceHost.exe` | `verified-pdb` | `03FA474EDDD8E1EABEA626A7B633DC7E+1` | `b012b84674ae63052c368227ce41be39e5586d759b5eff8e3fbf01f53bfd00f1` |
+| `networkux` | `C:\Windows\ShellExperiences\NetworkUX.dll` | `verified-pdb` | `121D55F8E7B3A446ADF92FD8EC98C999+1` | `fc3fcb87058eb6177ae03c1e4ffc7a1cc3c910188e139fa3055cbb997fd01921` |
+| `appextension` | `AppExtension.dll` | `verified-pdb` | `7B71744CB4C28E44F0AF38E637993305+1` | `2ad99904f458766ab4827c133d44541e4250ba55505d26450d037d8a7a60df59` |
+| `appresolver` | `appresolver.dll` | `verified-pdb` | `CE07A55333478837A4F28DA169A58C89+1` | `e086ea3295e2cf1d8ac1757b2070b31205fde2c7d0dc559d0fca1a3535946b15` |
+| `appxdeploymentclient` | `AppXDeploymentClient.dll` | `verified-pdb` | `924E29C9A98AB1A3129777F274A22253+1` | `2e01fea8ea24980884ff8309ef60318a3dfc183dc0fc58f666cd0df6e8b1fd77` |
+| `bcp47langs` | `Bcp47Langs.dll` | `verified-pdb` | `5DBC5D146317FFC632245FB650DDAC78+1` | `69a8a3a2cbf45add28bd44b3ed06a7a3420928ccd717544fdc5b3a0aa8da15a7` |
+| `bcp47mrm` | `bcp47mrm.dll` | `verified-pdb` | `7FE039885A2E835A02DB58F3579608CA+1` | `c8a840f9681ee5e9bccba59ef94f50ea9eb82db928869c7e3b559f80da077614` |
+| `biwinrt` | `biwinrt.dll` | `verified-pdb` | `5911B9AD2E0AB55E7D22DBF876D0A06A+1` | `48bb06928c17b1f685dd72505ac2ab280398ad65f256f5b4496300332fa91116` |
+| `cldapi` | `cldapi.dll` | `verified-pdb` | `A653D1B32C576A9F029C7A663DB0F2F3+1` | `f535c2b552899b4c97fb60fbdff1a528de02850dba7da0fc6842f2195d3e8868` |
+| `cloudexperiencehostcommon` | `CloudExperienceHostCommon.dll` | `verified-pdb` | `2B989DB28022C5E3080B4D417CDED23D+1` | `e3fbd621a5163fb2bd942034d6ac4e14ff5fd7c293ed7b878d6ff20d8d884b33` |
+| `coml2` | `coml2.dll` | `verified-pdb` | `1723CD23737D8335C38BBD3710F9EEB7+1` | `df62ba1c36325532c6b60229a855e38e88410c2fc5dcc89ac2a05fa06ff5f412` |
+| `coreprivacysettingsstore` | `coreprivacysettingsstore.dll` | `verified-pdb` | `0F633F5854BC35CF7C6A52B770350077+1` | `a0683f166a3e059c639debf4c9bebb82990dc26baa0c14c2736e7de1f6b1b289` |
+| `coreuicomponents` | `CoreUIComponents.dll` | `verified-pdb` | `B405E11DB9F2D4C56129F644C02687C7+1` | `6927df3deaf036b440f78bd4cfe9d61514bd9dba050923e985886eb4a4f5c96a` |
+| `cryptnet` | `cryptnet.dll` | `verified-pdb` | `14B383B3F799AC5D390068CAC4943572+1` | `facd65fb7d6cf40050260835a84190a65475b994467d8b7c650720773887a6df` |
+| `cryptowinrt` | `CryptoWinRT.dll` | `verified-pdb` | `CD1CF87037A31E2FC8A853012B8D2018+1` | `e3c4fbe87a8d7be478d5ef27712e85c5e6c2a50d23aa0c0a175c27c3511faa8b` |
+| `dataexchange` | `DataExchange.dll` | `verified-pdb` | `97D69F9EE663B1AEC5CFBB39810797E0+1` | `6b979beb361e0e0091d213aa6be72c95d94dd4ad93b91decbd34ca825945460d` |
+| `directmanipulation` | `directmanipulation.dll` | `verified-pdb` | `5DA9179DEE5C59B15A9A641E12915209+1` | `7e23aabf169f39aa4821547b97426242bd05a521c1f1d0f56458001a17e4b31f` |
+| `directxdatabasehelper` | `directxdatabasehelper.dll` | `verified-pdb` | `9747AAF567DC615CA025165F35B52FF1+1` | `10742f32cdc1b37ecd6d7fe052ebbd31e9e78e049c2faeed96a634397dc0a70c` |
+| `dmcmnutils` | `DMCmnUtils.dll` | `verified-pdb` | `DC71435A82F311F71E99AF34D7E121D3+1` | `32cbca7a451c9b865c68119d813dac67f9df6ceb96e0529695b00f8cebf14b88` |
+| `dmiso8601utils` | `dmiso8601utils.dll` | `verified-pdb` | `2BBA8F6D11E942080C06E27F2240CB93+1` | `aa691488f157c0092eb83b4654ae7192611d0d459e8319a1baaa230b1b2e351d` |
+| `igc64` | `igc64.dll` | `unavailable-optional` | — | — |
+| `igd10iumd64` | `igd10iumd64.dll` | `unavailable-optional` | — | — |
+| `igdgmm64` | `igdgmm64.dll` | `unavailable-optional` | — | — |
+| `dsparse` | `DSPARSE.dll` | `verified-pdb` | `8FA49081BBE43D8CBFF3D9797D087DB2+1` | `c78ac36d970b6fa79206a161d4ded0886879c4df80791dd22650a8a7afd9c2eb` |
+| `edputil` | `edputil.dll` | `verified-pdb` | `0237317E68D2A8848BCC0E547EA8962B+1` | `d2192946fe59b7b45598eca96702a14b3cb5012ff448dc27c9e3407d7a2468e4` |
+| `execmodelproxy` | `execmodelproxy.dll` | `verified-pdb` | `748B4316D4B2BB27C0F46F021482CB11+1` | `f70f32996492908d829280e367b93a423d35a2b216dd986ede951762fa46cec8` |
+| `familysafetyext` | `familysafetyext.dll` | `verified-pdb` | `1A31F561E1C00B9DE452B5235F6B4CAF+1` | `365f0f8bcf02bb726bbaf6b1d8ad7459dfff9e31d1e6310f69a69c8a7d8cd4be` |
+| `firewallapi` | `firewallapi.dll` | `verified-pdb` | `BD9D0F5128E189B7338AA1843E93877A+1` | `ea28429a48bc2dc70008e5486f60fcea66b27f6e507ab7d5727d22421003ee8b` |
+| `fontgroupsoverride` | `fontgroupsoverride.dll` | `verified-pdb` | `E8E6EAD1D97C02695995B452D6B6E4B6+1` | `0cb0d05d0630e9b812e999e61205518e03018ebf046f288085f49dc3fb0b8acd` |
+| `fwbase` | `fwbase.dll` | `verified-pdb` | `64DE1891E1AFF3C8977B538CED701A79+1` | `dac495ec9bd9d80e90244f25e650a51f502b60903df04ff8592884549d27d2f9` |
+| `icu` | `icu.DLL` | `verified-pdb` | `94451369D782EA5D26A5A3501C131722+1` | `7e28c779e6015cc794677ffb00fef38ed76f0f0734130f8c85deaa2ff22fe703` |
+| `icuin` | `icuin.dll` | `verified-pdb` | `4871CF702A22393F38F318213444A435+1` | `585026af25fe25b330de89c5b7376ec8ac504980f4393b98236fbdb302e3215b` |
+| `icuuc` | `icuuc.dll` | `verified-pdb` | `C40BBB1D86629A50E7CC7436C61839B2+1` | `59d134ddc15ae0594f0a328979f8201662fc82634ddb7c537b156e7cf871f5eb` |
+| `imagehlp` | `imagehlp.dll` | `verified-pdb` | `86E106E3755AABC5008BF69644E7EFCF+1` | `58117bbc51c4a56b6c4789e190f33a540b7734e394ada9652e2832e3d2e16588` |
+| `languageoverlayutil` | `languageoverlayutil.dll` | `verified-pdb` | `5505AF516FB354C9F0D5CA03473CF52D+1` | `c8b664030f064f5aaf66c3ec95e69c3764c4d4ec9f7ae27300a4d08c3c1ec65d` |
+| `linkinfo` | `LINKINFO.dll` | `verified-pdb` | `5BA53657C4851D06C42FE0D77F578617+1` | `f967389394d1f3bf15c1e125d81f8f45cbafc499b6b9385d74b8021b395dc6ee` |
+| `mdmregistration` | `MDMRegistration.DLL` | `verified-pdb` | `A4C9B5EB38F04314CA3BDD15D28D6147+1` | `b7a81f6dd4e1c48f53df7e94dc5fe5d02f1edb9124cda9f65f05020dbecdcc53` |
+| `microsoft-internal-warppal` | `Microsoft.Internal.WarpPal.dll` | `verified-pdb` | `E2AF68F0610EE4E50D7CDF8163C8A9CF+1` | `c9ab2e96692ba5b74d27c5287fd3aa5d892fe16ef6210c4ce04fb22ac0496450` |
+| `mobilenetworking` | `MobileNetworking.dll` | `verified-pdb` | `CB0873A16D12257B739D89BEFE5318A9+1` | `ce51599cd399712a7f8c437772dce8c91b2622322503739f2e895170416cedbc` |
+| `mpr` | `MPR.dll` | `verified-pdb` | `9F841B04F37F7332CD5AE4751DAAFA23+1` | `8bb319c8c8255e915c05c03eccc24981cf9653025d2f720fb7fffdd4d524309c` |
+| `mrmcorer` | `MrmCoreR.dll` | `verified-pdb` | `61B296743E8167A3127B98CCB074D3F3+1` | `6186f981d1aa1e1991697133aa066045097ab52227a240632a0c7d8fd04352be` |
+| `msftedit` | `msftedit.dll` | `verified-pdb` | `29B23D050B766F9CF298BD6C47909AAC+1` | `117d6b3db6706f3731cfa56c16358c83d23271ecdd6a20f5b67b254465e551ed` |
+| `msvcp110_win` | `msvcp110_win.dll` | `verified-pdb` | `AAE9B9C88D08B8401B910620E431ADA8+1` | `782e62872c751682bc220489b07db6b80820e3799416028630ad899fba113ae6` |
+| `msxml6` | `msxml6.dll` | `verified-pdb` | `C8C4A9D7C5F7A6728D677E44760BCFCD+1` | `f17f416ca91614446123e16d9560ce44329308f9da0394c4c8420e4cf1961162` |
+| `netutils` | `netutils.dll` | `verified-pdb` | `A62B5BE79F6C45E02EEA8270BB52C5D7+1` | `71e1eb4a3027cf348d71bfdfebf0ede76d05d521293250d627417f7c2d9478d8` |
+| `notificationcontrollerps` | `NotificationControllerPS.dll` | `verified-pdb` | `6511CAEBBBA20E0D0B4870571A3EA8EB+1` | `5556e832cbdbc4806258e547376f9ca00fd3a17c937f0964a2cc7868b85c5947` |
+| `notificationintelligenceplatform` | `NotificationIntelligencePlatform.dll` | `verified-pdb` | `88BF8976400046F22C655574BA083A40+1` | `b3586e5ec820079ef24ef60aa3a2157e84de551b8c172af8c6a8c3681a0d044d` |
+| `ntasn1` | `NTASN1.dll` | `verified-pdb` | `5858845AC890E5F0CB04F2303DD78B3E+1` | `04a37b3d847944b0086c330195d3ffa84c6178125684740254d4a964551977e5` |
+| `omadmapi` | `omadmapi.dll` | `verified-pdb` | `616888ACE68FBD1630F29FFDE0456E87+1` | `2f5e09b548584fd985d21b32594c6b12e0fc125c0e531b886143cbc11344c3e6` |
+| `ondemandconnroutehelper` | `ondemandconnroutehelper.dll` | `verified-pdb` | `CB0BF61BDA4C6506F09B220A172388C6+1` | `642c768f7bc6cc01fe1dff6078d45728452728a542a18cf771a2ae2c47f00d01` |
+| `onecorecommonproxystub` | `OneCoreCommonProxyStub.dll` | `verified-pdb` | `133171A7E5523C043BA98FB7837D5255+1` | `81403e2a0fa700c005131e20c231f860f9485346229b413f56fb97de1041f2c3` |
+| `onecoreuapcommonproxystub` | `OneCoreUAPCommonProxyStub.dll` | `verified-pdb` | `C4D93ADE38BB05517878FEC835F0642D+1` | `daea6f97cbdc41aedcc3de3ee735d73117485169a2df83816f4a0444bf54f5fb` |
+| `pfclient` | `pfclient.dll` | `verified-pdb` | `0E41F3E64EE9D8B61AF1FF1ED8C36A9D+1` | `fdb823cd38fb46f44aa81224b565bc772b40cd3452ef5bf0c0f804f8c0c27402` |
+| `photometadatahandler` | `PhotoMetadataHandler.dll` | `verified-pdb` | `C9962A5F4DBAC6633D3DD9C92D3A1E78+1` | `1ce5044d40f8c0efc43569babd7b6c382627ab4bf8c324849ab3f1ab6ab54205` |
+| `policymanager` | `policymanager.dll` | `verified-pdb` | `6D313F5D3D8606426B17AF9412B2C914+1` | `9b8a68b80e2cfe0bf9b2dcd62591891109cbaf5d0605be5eab532f404ff529e6` |
+| `profext` | `profext.dll` | `verified-pdb` | `01E4134E4C96D1EEF45B84F5F65E1DCB+1` | `e7fa48d1d8a7c70f3e5d13542ab5e2194baedd821651e3efeed96f6042cd2072` |
+| `quickactionsdatamodel` | `QuickActionsDataModel.dll` | `verified-pdb` | `39C65FDDE5F2F3D8C93B142703FE2551+1` | `9c67b44f3408d01eac51bf3fd11b5335373048f3989a506c9242dde384d448f3` |
+| `resourcepolicyclient` | `resourcepolicyclient.dll` | `verified-pdb` | `184339A5BD82D7188563A99A73A663CF+1` | `443a802b2287d316661794f69c690651f46d28fe905e93871cd8cbc99528e79c` |
+| `rmclient` | `RMCLIENT.dll` | `verified-pdb` | `47A091FB8280702877DE837AAB7E4619+1` | `667884a4471c9da403368adc1f8acb38c7a22fd5e75ce35deb13a4a8263a49f4` |
+| `rsaenh` | `rsaenh.dll` | `verified-pdb` | `C1CBDCFF3D390DA0721FDD1FE5F444DE+1` | `731771049467b6d01c7028a1269df17da37af8d323621e01a32856e306795400` |
+| `rtmediaframe` | `RTMediaFrame.dll` | `verified-pdb` | `C2575B0256F393C3262ECD8B288877D7+1` | `9f37620a788c6e7dbe818cdd22734b1150e9dbdace1b5f69124c448d71f27241` |
+| `shellcommoncommonproxystub` | `ShellCommonCommonProxyStub.dll` | `verified-pdb` | `6616FBFB0E617D8E3DA456908C09D9ED+1` | `bc69dbdb41d1de1d779b1367694863f0e55ad14629e2cdf8d7619ae4e00f1923` |
+| `windows-ui-shell-sharedutilities` | `Windows.UI.Shell.SharedUtilities.dll` | `unavailable-optional` | — | — |
+| `shutdownux` | `ShutdownUX.dll` | `verified-pdb` | `1C80E48FAFEB65ACF2834872F08F30E2+1` | `3c31e30fa18e273c1132f37556a2434a24b17f4ca97b56fbb20f4dd3781b1c9a` |
+| `srvcli` | `srvcli.dll` | `verified-pdb` | `62629E90CBC14A976B1080CB2472DF03+1` | `6170dddf6a03b2b3e9520e301fb3a06fae7fb4c617b2c7d7cceb2160e829fd4d` |
+| `staterepository-core` | `StateRepository.Core.dll` | `verified-pdb` | `154386A8B04540E5567BB9195A914A9F+1` | `905c2e56f614f5b32618c11eb098eee00425792939a64486f80fe68982825511` |
+| `structuredquery` | `StructuredQuery.dll` | `verified-pdb` | `9C06307500483AC6A0A67A4BB572C2A7+1` | `fbbd683108a130634ebf0ff2b7f6ad802082c8c58e3fae4ef5f097fd65e1d5b5` |
+| `systemsettings-datamodel` | `SystemSettings.DataModel.dll` | `verified-pdb` | `39EA44C668BEAF42128599072A0BA595+1` | `e024c15b1c4340cfccd1a3b71fa977c01d8669937aba6294fa76c4f1ec11c2e8` |
+| `textshaping` | `TextShaping.dll` | `verified-pdb` | `F46F97DE17452BBD52342A7F49A45B34+1` | `d072443a8a5a073857be1f0cfedbe8875a8fadba6abf84999dd2e0e8aa1e720f` |
+| `threadpoolwinrt` | `threadpoolwinrt.dll` | `verified-pdb` | `63B3ECE774D4E81CA2E5DF1D237ACFF2+1` | `556d65bc0e5fd7dff550f37e9a8b1b7bd45c7359b8059fd3b4905e748aed230f` |
+| `tiledatarepository` | `TileDataRepository.dll` | `verified-pdb` | `0A2D5857C065B0B76A6F8CF280AC149F+1` | `9e1922d60ebf91a3c65e93c02eda66d7c34fe10702f00f9ad20fb25e29bd689e` |
+| `twinapi-appcore` | `twinapi.appcore.dll` | `verified-pdb` | `2DDC49ECF9FE9DBADD8C2C64C31E7CB0+1` | `0d3e56c5068633f975bcab528267789f520f82a6d6a50f1330104e7597289b43` |
+| `uiamanager` | `UiaManager.dll` | `verified-pdb` | `C8156847D18AAABB40FC8B4A358EF14A+1` | `d5e8b9a4759aef32725e37d843fc838d90a068128c78cb11dfd7d858dc881f06` |
+| `userenv` | `USERENV.dll` | `verified-pdb` | `68B1C8D17B22FE9E7D6E5A28FF763527+1` | `e5e77885cbac08ac247fa45916eca36d2fde292a8527ac2c428f36a691827fea` |
+| `usermgrcli` | `usermgrcli.dll` | `verified-pdb` | `801A8E60551F232886722A35E099757D+1` | `8f36df633756eecef02a2c606a7c5ab7ba032bbb164709c4977a8b26b0232b89` |
+| `usermgrproxy` | `usermgrproxy.dll` | `verified-pdb` | `1C2F914297DE45D5A588225DBD6A79C1+1` | `b21e50323f5715f2284e5e3573820b665cba1f6bd2240dfa73e5208716d57c14` |
+| `virtdisk` | `virtdisk.dll` | `verified-pdb` | `0F8DAB0B65DC70C2A293A66714E78BFE+1` | `6e9bef39f6e879d29f187aa0edb6b7d8a2b2876936b204f4ce7ea7e1c4d873a5` |
+| `winbrand` | `WINBRAND.dll` | `verified-pdb` | `068906F10CBA0EF95E076F3D8F5F5E90+1` | `dce55a2bd8f961029215e2e3b72c81eb6a9f63c00905e4f6a536f99e43d52c08` |
+| `wincorlib` | `wincorlib.DLL` | `verified-pdb` | `A463B64F8758976F61E211FD19C0EA75+1` | `060edefd4e8a9df57a412d423cb09a239977ad32b4832331455afe7fd04eb071` |
+| `windowmanagementapi` | `WindowManagementAPI.dll` | `verified-pdb` | `96BB0203826545CBA8CF1002676ED2DA+1` | `222d3f1cd858bb1da2b17f83bd1580271dd47a7a0828727750284ddbae0d9624` |
+| `windows-applicationmodel` | `Windows.ApplicationModel.dll` | `verified-pdb` | `25207C43ACE41278E536102AA0E03672+1` | `6e75aaf21238345d105f9556674efad1394aad6e35404518d400ea1b637c04bb` |
+| `windows-cloudstore` | `Windows.CloudStore.dll` | `verified-pdb` | `ABD2661654539EEF55DF65E3BD3418C4+1` | `dcb51282b7f014fc0ee5c394e731b9402fe28fdd101a67820a53b117bfbfbeda` |
+| `windows-energy` | `Windows.Energy.dll` | `verified-pdb` | `397E1F02D92780C11086B684BCBF6514+1` | `a43ada0529b4feaa7aba29ec213f42cfcae1378276e5b10beba5d9c6c4025195` |
+| `windows-fileexplorer-common` | `windows.fileexplorer.common.dll` | `verified-pdb` | `A54F071673340DDEC700FEEFF5D25F96+1` | `84bb31f4c04c248ac566afbb558b90d18fa52585aef82621efdb723701daeb79` |
+| `windows-globalization` | `Windows.Globalization.dll` | `verified-pdb` | `89FB479B9759B9447A8C5EB7A4ADDA4D+1` | `d50a31702a4199cb31b729d5113f4693a18a9b735fdbcd736d0a679f0efeaa53` |
+| `windows-globalization-fontgroups` | `Windows.Globalization.Fontgroups.dll` | `verified-pdb` | `F229BCF467217B70B1914FE0719AB172+1` | `1e71964769d6ef34b4283024f92aea8a2319638943a7409ae693e7eede6e4a31` |
+| `windows-graphics` | `Windows.Graphics.dll` | `verified-pdb` | `D1AA3B701B0C3E854225B064968842AF+1` | `5db92f87796f9a1d89741cc8c034562316dce42cbeef89b043a138ff7c01d835` |
+| `windows-internal-shell-broker` | `windows.internal.shell.broker.dll` | `verified-pdb` | `0DAAB5C207A0ADEBE9B8CBF24E252F16+1` | `390005df256671b42e854bc271accdaba9d5b309908290d9755a2c6a05e58e6d` |
+| `windows-internal-system-userprofile` | `Windows.Internal.System.UserProfile.dll` | `verified-pdb` | `5D344992CDA611CCBE9DBF37024D27B7+1` | `07081ceb2a5782dd44f8377bf69268ab3ca1fdf242a5333ba01f959f23a79e3b` |
+| `windows-management-workplace` | `Windows.Management.Workplace.dll` | `verified-pdb` | `AAB2CEB35B11AB78CA5A6153D47DACD7+1` | `415c3f55c78ab8aed3c454a7b986dd0b1ff23be0df78675771b2c1ed63a8e1a7` |
+| `windows-security-authentication-onlineid` | `Windows.Security.Authentication.OnlineId.dll` | `verified-pdb` | `38591E741D6F85C1EB6A06203C5B3338+1` | `f2fc7bbd3d46efa4761510308f5754022bc8492de8abbdd49bc4602b451a03f8` |
+| `windows-security-authentication-web-core` | `Windows.Security.Authentication.Web.Core.dll` | `verified-pdb` | `1F1ED8028B3E9C6CF8D04CBA0B0C3BA1+1` | `28a0bcb9db1d97110b8609edc7039acfd5e360a2495a06385101f66e33f7875f` |
+| `windows-shell-servicehostbuilder` | `Windows.Shell.ServiceHostBuilder.dll` | `verified-pdb` | `3EFED03FE7EB5975F54B58EF72F80962+1` | `8e2b1e9a91e1227dd1b3ff16fb7991759094eef38fd10d3c0307b0afaa777176` |
+| `windows-staterepository` | `Windows.StateRepository.dll` | `verified-pdb` | `70582F4CAD0E8473BBF0389EC93DDC0B+1` | `8183bb420cada8c7a8b93a0d42ce77151bceb95ca3c506ab13c56f4a173da29e` |
+| `windows-staterepositoryclient` | `windows.staterepositoryclient.dll` | `verified-pdb` | `42B6423C34B2139A088D66F0CB54F76C+1` | `c4277c4088f124b241707fee55ebbca31a4382de55688e77318d4fd2e63607c1` |
+| `windows-staterepositorycore` | `windows.staterepositorycore.dll` | `verified-pdb` | `105F45A02F9B1100DA469DAB55891634+1` | `6d274c7630fadee57f0b4ff8ef66e818b800b52e557e7aa8a3905c779002f295` |
+| `windows-staterepositoryps` | `Windows.StateRepositoryPS.dll` | `verified-pdb` | `1E1AA1324616E83A1EFB7F0E1C688144+1` | `f0a2a83e796a1e1f45650a1a427562f12a78fe8e2220284f3562e2ef7fda5ec9` |
+| `windows-storage-applicationdata` | `Windows.Storage.ApplicationData.dll` | `verified-pdb` | `D1122A17AA1E8E6B9E569924AA1D5453+1` | `05f3ba69ee74f7d4346b3a1e59d5b68d3298cfd79d102b61d31961bf8627c33b` |
+| `windows-system-launcher` | `Windows.System.Launcher.dll` | `verified-pdb` | `C41227BC2AB92AA0DE5CD89B07D67507+1` | `5e4fe35be7ba782d8959ee32e3e18af3fad2524ed4784b7551a017e66df57104` |
+| `windows-system-userprofile-diagnosticssettings` | `Windows.System.UserProfile.DiagnosticsSettings.dll` | `verified-pdb` | `2BDBB469B52FAF1741E561DEEF8FE838+1` | `8e365cda6d0877c7e5985d1358fa16570e0f2c50cbe27d6e33b9f54cdab3aec1` |
+| `windows-ui-core-textinput` | `windows.ui.core.textinput.dll` | `verified-pdb` | `521E10D24E636F3902AD789668B3A875+1` | `d4ccd42a11b3ab63df1258b5e59f20d2f7d142fc28040f377d6a826b0f302e01` |
+| `windows-ui` | `Windows.UI.dll` | `verified-pdb` | `177CDFB6D167A7FC87FF756A911F588D+1` | `0b8b1a5342cf4600329f950e8b0cfa141168b90ea2b05b806ab4c30eba0a6f17` |
+| `windows-ui-immersive` | `Windows.UI.Immersive.dll` | `verified-pdb` | `3E5295741C2C9A22439BB61BA05D03AB+1` | `818956bff8d55f2beb093ddffb9cd7619b7b8bddd0720601a01a11239cc420dd` |
+| `windows-ui-xaml-controls` | `Windows.UI.Xaml.Controls.dll` | `verified-pdb` | `8036AD938B1981120265E322C90672FB+1` | `aad4465b8991260202391679e7583e34708d2b271def6a2ed42d307f209732a7` |
+| `windows-ui-xaml` | `Windows.UI.Xaml.dll` | `verified-pdb` | `2A7B381FC8C25B7402BAD032E0603FB3+1` | `16302bfe92cd6d1cdae9666767e53323fa11e10ab1c751d8142e6f95f3a82899` |
+| `windows-web` | `Windows.Web.dll` | `verified-pdb` | `BD176DDFF432E7DA0F0753A92160B632+1` | `79b60ca3504c9a30d91d8be0ebef2b3e307cff60ced406d8c035558cafc0851a` |
+| `windows-web-http` | `Windows.Web.Http.dll` | `verified-pdb` | `135F0B5020415E903FA3C602AEFF3092+1` | `beba2c3b048170d23dd5f3d00babd92fdf247c0f0d1f640ec3faeb8613dd0ce2` |
+| `winnsi` | `WINNSI.DLL` | `verified-pdb` | `907CE42FFA71F5085D1468AD2D40D62C+1` | `34fa2986c8cd3806de06083a65dc25fc2d7731b9551b5c51e7021041897ed878` |
+| `winrttracing` | `WinRtTracing.dll` | `verified-pdb` | `ABCB05AAA82B8935CAD14F99545B0129+1` | `d943603fe713c7c6572a18d954c811bbf48e034ddcc9d51ae30bb525233f763a` |
+| `winsta` | `WINSTA.dll` | `verified-pdb` | `BC7AB0876736ACB3152D660A68495F41+1` | `94365e3090001ce4003d000424d07bf5ce3d28b9311372ab864e106117ec0072` |
+| `wintrust` | `WINTRUST.dll` | `verified-pdb` | `79420CA7BA8D140B549434332A96709A+1` | `1fabae0284fa498f92ac83f10e928ab7dcefb42e50198e913291d37b496b7e40` |
+| `wtsapi32` | `WTSAPI32.dll` | `verified-pdb` | `E1B14D967968BCE67CEC223811A868B0+1` | `2fba19e8bedfee7508ebc5113ca2e6415b779db1fd0bd5f17f4d03811d7958ca` |
+| `wuceffects` | `wuceffects.dll` | `verified-pdb` | `3F75F31E7F793D78BC1B22C5E46B1BF6+1` | `681c6fce8747d6534a2ed980e3f67959ac245014a7fd7ed256af06ed55e84fbd` |

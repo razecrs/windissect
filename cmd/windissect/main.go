@@ -556,7 +556,7 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool
 
 	cmd2 := exec.Command(exePath, args...)
 	cmd2.Dir = work
-	output, err := runStreaming(cmd2)
+	output, err := runStreamingWatched(cmd2, work, 20*time.Minute)
 	if err != nil {
 		return processOutcome{}, fmt.Errorf("pass 2 failed: %w: %s", err, output)
 	}
@@ -568,6 +568,11 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool
 	}
 	if b, err := os.ReadFile(irFile); err != nil || !json.Valid(b) {
 		return processOutcome{}, fmt.Errorf("pass 2 produced invalid IR at %s", irFile)
+	}
+	if !shallow {
+		if err := gateCompleteness(filepath.Join(final, "inventory.json"), dllName); err != nil {
+			return processOutcome{}, err
+		}
 	}
 	verify := exec.Command(exePath, "verify", "--ir", irFile)
 	verify.Dir = work
@@ -632,6 +637,106 @@ func runStreaming(command *exec.Cmd) ([]byte, error) {
 	command.Stderr = output
 	err := command.Run()
 	return captured.Bytes(), err
+}
+
+// An extraction that produced nothing is a failure, not a verified target.
+//
+// A PDB that resolves but contributes no symbols still wrote a well-formed IR,
+// and the only check here was json.Valid - which an empty record passes. So a
+// record carrying three symbols was stored as verified-pdb and archived as a
+// build, and stayed that way long enough to look normal: the published taskbar
+// record in the ReWindows archive is one of these.
+//
+// Symbols are the signal, not classes. Classes come from the later semantic
+// stage and are legitimately 0 here even on a complete extraction.
+func gateCompleteness(inventoryPath, dllName string) error {
+	b, err := os.ReadFile(inventoryPath)
+	if err != nil {
+		// No inventory to judge by. Leave the result alone rather than
+		// failing a target on the absence of a summary file.
+		return nil
+	}
+	var summary struct {
+		PDBPresent bool `json:"pdb_present"`
+		Symbols    int  `json:"symbols"`
+		Functions  int  `json:"functions"`
+		VTables    int  `json:"vtables"`
+	}
+	if err := json.Unmarshal(b, &summary); err != nil {
+		return nil
+	}
+	// Real extractions of a shell binary run to six figures of symbols; the
+	// empty ones carry single digits. There is no boundary case in between to
+	// argue about, so the threshold only has to be obviously below one and
+	// obviously above the other.
+	const minSymbolsWithPDB = 100
+	if summary.PDBPresent && summary.Symbols < minSymbolsWithPDB {
+		return fmt.Errorf(
+			"extraction produced nothing usable for %s: PDB resolved but only %d symbols, "+
+				"%d functions, %d vtables", dllName, summary.Symbols, summary.Functions,
+			summary.VTables)
+	}
+	return nil
+}
+
+// Total bytes and newest modification time under a directory, used to tell a
+// slow extraction from a stalled one.
+func dirFootprint(root string) (int64, time.Time) {
+	var total int64
+	var newest time.Time
+	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		total += info.Size()
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	return total, newest
+}
+
+// Run a command, killing it if it stops making progress.
+//
+// windissect hung on Windows.UI.Xaml.dll: over two hours of CPU, 440 MB
+// resident, and no disk write after the first minute. CPU burn looked like
+// work, so the pull sat at the same count for hours while a core spun. Disk
+// activity is what actually separates the two, so that is what is watched.
+func runStreamingWatched(command *exec.Cmd, watchDir string, idle time.Duration) ([]byte, error) {
+	var captured bytes.Buffer
+	output := io.MultiWriter(os.Stdout, &captured)
+	command.Stdout = output
+	command.Stderr = output
+	if err := command.Start(); err != nil {
+		return nil, err
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- command.Wait() }()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	lastSize, lastWrite := dirFootprint(watchDir)
+	lastProgress := time.Now()
+	for {
+		select {
+		case err := <-finished:
+			return captured.Bytes(), err
+		case <-ticker.C:
+			size, write := dirFootprint(watchDir)
+			if size != lastSize || write.After(lastWrite) {
+				lastSize, lastWrite = size, write
+				lastProgress = time.Now()
+				continue
+			}
+			if stalled := time.Since(lastProgress); stalled > idle {
+				_ = command.Process.Kill()
+				<-finished
+				return captured.Bytes(), fmt.Errorf(
+					"stalled: no file activity for %s", stalled.Round(time.Minute))
+			}
+		}
+	}
 }
 
 // replaceFile installs a verified result while preserving the previous file

@@ -116,3 +116,53 @@ func TestShallowResultDoesNotSatisfyDeepRun(t *testing.T) {
 		t.Fatal("a deep entry should satisfy a deep run")
 	}
 }
+
+// The shape of the record that has been silently passing: a PDB resolved, the
+// IR is well-formed JSON, and there is nothing in it. The published ReWindows
+// taskbar build is exactly this - 3 symbols, 0 classes.
+func TestGateRejectsEmptyExtraction(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory.json")
+	body := `{"pdb_present":true,"symbols":3,"functions":0,"vtables":0,"classes":0}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateCompleteness(path, "taskbar.dll"); err == nil {
+		t.Fatal("expected an empty extraction to be rejected")
+	}
+}
+
+// Classes are 0 on a complete extraction too - they come from the later
+// semantic stage - so the gate must not key on them.
+func TestGateAcceptsRealExtractionWithZeroClasses(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory.json")
+	body := `{"pdb_present":true,"symbols":206365,"functions":48066,"vtables":16107,"classes":0}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateCompleteness(path, "Microsoft.UI.Xaml.dll"); err != nil {
+		t.Fatalf("rejected a complete extraction: %v", err)
+	}
+}
+
+// A module with no PDB legitimately yields few symbols; that is unavailable,
+// not a failed extraction, and must not be failed here.
+func TestGateIgnoresTargetsWithoutPDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory.json")
+	body := `{"pdb_present":false,"symbols":2,"functions":0,"vtables":0}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateCompleteness(path, "vendor.dll"); err != nil {
+		t.Fatalf("failed a target that never had symbols to begin with: %v", err)
+	}
+}
+
+// A missing summary is not evidence of failure.
+func TestGateIsSilentWithoutInventory(t *testing.T) {
+	if err := gateCompleteness(filepath.Join(t.TempDir(), "absent.json"), "x.dll"); err != nil {
+		t.Fatalf("absence of a summary failed the target: %v", err)
+	}
+}
