@@ -1,5 +1,6 @@
 //! Windissect: target-independent Windows PE/PDB dissection pipeline.
 
+mod archive;
 mod demangle;
 mod diff;
 mod docs;
@@ -69,6 +70,47 @@ enum Cmd {
         /// Reuse an existing IR instead of re-running extraction.
         #[arg(long)]
         ir: Option<PathBuf>,
+    },
+    /// Build a module dependency graph from a set of IR databases.
+    Deps {
+        /// IR files, or directories containing them.
+        #[arg(required = true)]
+        ir: Vec<PathBuf>,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Descend into subdirectories.
+        #[arg(short, long)]
+        recursive: bool,
+    },
+    /// Report where each binary's PDB lives on a symbol server.
+    Symbols {
+        /// Binaries, or directories of them.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        #[arg(long, default_value = "https://msdl.microsoft.com/download/symbols")]
+        server: String,
+        /// Emit JSON instead of a table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Build a corpus manifest from directories of binaries.
+    Manifest {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Tag every target with an area name.
+        #[arg(long, default_value = "")]
+        area: String,
+        #[arg(short, long)]
+        recursive: bool,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Summarise an archive history tree: every module, every build.
+    Catalog {
+        #[arg(default_value = "history")]
+        history: PathBuf,
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
     /// Emit a reconstructed C++ header for a single class.
     EmitCpp {
@@ -246,6 +288,12 @@ fn main() -> Result<()> {
         } => emit_syms_command(&ir, &out, name, base),
         Cmd::EmitEvidence { out, ir } => emit_evidence_command(&ir, &out),
         Cmd::EmitAsm { out, ir } => emit_asm_command(&ir, &out),
+        Cmd::Deps { ir, out, recursive } => archive::deps_command(&ir, out.as_deref(), recursive),
+        Cmd::Symbols { files, server, json } => archive::symbols_command(&files, &server, json),
+        Cmd::Manifest { paths, area, recursive, out } => {
+            archive::manifest_command(&paths, &area, recursive, out.as_deref())
+        }
+        Cmd::Catalog { history, out } => archive::catalog_command(&history, out.as_deref()),
         Cmd::Classes { ir } => list_classes(&ir),
         Cmd::Verify { ir, profile } => verify_command(&ir, profile.as_deref()),
         Cmd::Doc { out, ir } => doc_command(&ir, &out),
