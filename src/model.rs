@@ -255,6 +255,14 @@ pub struct BinaryInfo {
     pub image_base: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_size: Option<u64>,
+    /// Modules this binary imports from, as named in its import directory.
+    ///
+    /// Module-level dependencies, not the per-symbol `imports` on a Symbol.
+    /// The PE parser already holds these; not recording them meant anyone
+    /// wanting a dependency graph had to shell out to objdump for data the
+    /// extractor had in hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
 }
 
 /// A stable reference to bytes/instructions supporting an analysis fact.

@@ -246,6 +246,22 @@ fn binary_info(dll: &Path, bytes: &[u8], pe: &PE<'_>, base: u64) -> BinaryInfo {
             .optional_header
             .as_ref()
             .map(|header| u64::from(header.windows_fields.size_of_image)),
+        // API sets are forwarders - recording them hides the module that
+        // actually satisfies the import, which is the edge worth having.
+        dependencies: {
+            let mut libs: Vec<String> = pe
+                .libraries
+                .iter()
+                .map(|l| l.to_string())
+                .filter(|l| {
+                    let low = l.to_ascii_lowercase();
+                    !low.starts_with("api-ms-") && !low.starts_with("ext-ms-")
+                })
+                .collect();
+            libs.sort_unstable();
+            libs.dedup();
+            libs
+        },
         ..Default::default()
     };
     if let Some(dbg) = pe
