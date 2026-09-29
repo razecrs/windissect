@@ -252,7 +252,7 @@ fn binary_info(dll: &Path, bytes: &[u8], pe: &PE<'_>, base: u64) -> BinaryInfo {
             let mut libs: Vec<String> = pe
                 .libraries
                 .iter()
-                .map(|l| l.to_string())
+                .map(std::string::ToString::to_string)
                 .filter(|l| {
                     let low = l.to_ascii_lowercase();
                     !low.starts_with("api-ms-") && !low.starts_with("ext-ms-")

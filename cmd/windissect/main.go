@@ -1232,11 +1232,23 @@ func main() {
 	fmt.Printf("[*] Corpus Root: %s\n", root)
 	fmt.Printf("[*] Extractor Binary: %s\n", extractorPath)
 
+	args, limitOption, err := takeOption(args, "--limit")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	args, modulesOption, err := takeOption(args, "--modules")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	args, redo := takeFlag(args, "--redo")
+
 	cmd := "all"
 	if len(args) > 0 {
 		cmd = args[0]
 	}
-	if cmd != "pull" && cmd != "emit" && cmd != "all" {
+	if cmd != "pull" && cmd != "emit" && cmd != "all" && cmd != "history" {
 		fmt.Fprintf(os.Stderr, "[!] unknown command %q\n", cmd)
 		os.Exit(2)
 	}
@@ -1295,6 +1307,30 @@ func main() {
 	}
 
 	switch cmd {
+	case "history":
+		if modulesOption == "" {
+			fmt.Fprintln(os.Stderr, "[!] history needs --modules uDWM,dwmcore,...")
+			os.Exit(2)
+		}
+		var modules []string
+		for _, m := range strings.Split(modulesOption, ",") {
+			if trimmed := strings.TrimSpace(m); trimmed != "" {
+				modules = append(modules, trimmed)
+			}
+		}
+		limit := 0
+		if limitOption != "" {
+			parsed, convErr := strconv.Atoi(limitOption)
+			if convErr != nil {
+				fmt.Fprintf(os.Stderr, "[!] --limit %q is not a number\n", limitOption)
+				os.Exit(2)
+			}
+			limit = parsed
+		}
+		if err := historyPull(modules, root, extractorPath, limit, !redo); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "pull":
 		results, failed := processTargets(targets, windowsDir, root, extractorPath, shallow)
 		if err := writeCorpusIndex(root, extractorPath, results); err != nil {

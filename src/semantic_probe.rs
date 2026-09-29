@@ -278,6 +278,10 @@ const fn default_timeout() -> u64 {
     10_000
 }
 
+// Decomposition debt: this validator is one long linear sequence of manifest
+// checks. Splitting it is a separate, test-guarded pass; allowed here so the
+// strict gate stays meaningful for everything else.
+#[allow(clippy::too_many_lines)]
 pub fn load_and_validate(db: &Database, binary: &Path, path: &Path) -> Result<ProbeManifest> {
     ensure!(
         binary
@@ -608,7 +612,19 @@ pub fn helper(binary: &Path, manifest_path: &Path, out: &Path) -> Result<()> {
     crate::diff::atomic_write(out, &serde_json::to_vec_pretty(&result)?)
 }
 
+// Decomposition debt: the runtime probe is a long unsafe sequence (load, walk
+// vtables, call, capture). A later pass can lift the per-object step out; kept
+// whole for now so the strict gate stays green without touching probe behavior.
 #[cfg(windows)]
+// too_many_lines: decomposition debt (see above). The cast allows cover the
+// deliberate vtable walk: a stored object offset applied as isize, and reading
+// a vtable pointer through a `*const *const usize` - both are ABI-guaranteed at
+// the point of use, and are the intrinsic shape of calling a COM method by slot.
+#[allow(
+    clippy::too_many_lines,
+    clippy::cast_possible_truncation,
+    clippy::cast_ptr_alignment
+)]
 fn platform_probe(binary: &Path, manifest: &ProbeManifest) -> Result<Vec<ProbeObservation>> {
     use std::ffi::{OsStr, c_void};
     use std::os::windows::ffi::OsStrExt;
@@ -700,7 +716,7 @@ fn platform_probe(binary: &Path, manifest: &ProbeManifest) -> Result<Vec<ProbeOb
                             1 => {
                                 let f: unsafe extern "system" fn(*mut u8, i32, *mut i32) -> i32 =
                                     std::mem::transmute(method_addr);
-                                f(call_this, candidate, &mut out1)
+                                f(call_this, candidate, &raw mut out1)
                             }
                             _ => {
                                 let f: unsafe extern "system" fn(
@@ -710,7 +726,7 @@ fn platform_probe(binary: &Path, manifest: &ProbeManifest) -> Result<Vec<ProbeOb
                                     *mut i32,
                                 )
                                     -> i32 = std::mem::transmute(method_addr);
-                                f(call_this, candidate, &mut out1, &mut out2)
+                                f(call_this, candidate, &raw mut out1, &raw mut out2)
                             }
                         }
                     };
@@ -875,7 +891,7 @@ mod tests {
                 "enum_name": "SomeEnum",
                 "results": [
                     {"value": 0, "hresult": 0, "succeeded": true, "out1": 0, "out2": 0},
-                    {"value": 1, "hresult": -2147024809i64, "succeeded": false, "out1": 0, "out2": 0},
+                    {"value": 1, "hresult": -2_147_024_809i64, "succeeded": false, "out1": 0, "out2": 0},
                     {"value": 2, "hresult": 0, "succeeded": true, "out1": 1, "out2": 0},
                 ],
             })

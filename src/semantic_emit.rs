@@ -644,9 +644,14 @@ fn cpp_integer_type(name: &str) -> &'static str {
 }
 
 /// Project an enum value into the declared underlying type's representation.
-/// CodeView records enumerators with the enum's underlying width and
+/// `CodeView` records enumerators with the enum's underlying width and
 /// signedness, so a value may only be representable after wrapping into that
 /// type's range (e.g. `-4093` stored as `4294963203` under an `i32`).
+///
+/// The i128 below is overflow-safe scratch for the `rem_euclid` over an enum
+/// whose underlying type is at most 64-bit; the reduced result fits i64 by
+/// construction, so narrowing back is exact.
+#[allow(clippy::cast_possible_truncation)]
 fn project_enum_value(underlying: &str, value: i64) -> i64 {
     let (bits, signed) = match underlying {
         "i8" => (8, true),
@@ -660,7 +665,7 @@ fn project_enum_value(underlying: &str, value: i64) -> i64 {
         _ => return value,
     };
     let modulus: i128 = 1 << bits;
-    let wrapped: i128 = (value as i128).rem_euclid(modulus);
+    let wrapped: i128 = i128::from(value).rem_euclid(modulus);
     if signed {
         let half = modulus >> 1;
         if wrapped >= half {

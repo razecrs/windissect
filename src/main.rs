@@ -31,6 +31,7 @@ mod semantic_score;
 mod semantic_validate;
 mod typeparse;
 mod verify;
+mod winmd;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -70,6 +71,13 @@ enum Cmd {
         /// Reuse an existing IR instead of re-running extraction.
         #[arg(long)]
         ir: Option<PathBuf>,
+    },
+    /// Extract `WinRT` type metadata from a .winmd into the IR.
+    Winmd {
+        /// Path to the .winmd file.
+        winmd: PathBuf,
+        #[arg(short, long, default_value = "ir/winmd.json")]
+        out: PathBuf,
     },
     /// Build a module dependency graph from a set of IR databases.
     Deps {
@@ -288,6 +296,7 @@ fn main() -> Result<()> {
         } => emit_syms_command(&ir, &out, name, base),
         Cmd::EmitEvidence { out, ir } => emit_evidence_command(&ir, &out),
         Cmd::EmitAsm { out, ir } => emit_asm_command(&ir, &out),
+        Cmd::Winmd { winmd: path, out } => winmd::winmd_command(&path, &out),
         Cmd::Deps { ir, out, recursive } => archive::deps_command(&ir, out.as_deref(), recursive),
         Cmd::Symbols { files, server, json } => archive::symbols_command(&files, &server, json),
         Cmd::Manifest { paths, area, recursive, out } => {
@@ -884,7 +893,7 @@ fn report(db: &Database, out: &Path) {
 }
 
 /// UTC yyyy-mm-dd from the system clock, without a chrono dependency.
-fn date_today() -> String {
+pub(crate) fn date_today() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());

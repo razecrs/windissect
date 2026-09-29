@@ -25,8 +25,7 @@ const PE_EXTENSIONS: &[&str] = &[
 fn is_pe_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| PE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
-        .unwrap_or(false)
+        .is_some_and(|e| PE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 fn stem_of(path: &Path) -> String {
@@ -221,7 +220,7 @@ fn collect_json(root: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<
 /// canonical field order with the age appended in hex.
 ///
 /// A GUID is not sixteen opaque bytes. Its first three fields are stored
-/// little-endian, so hexdumping the CodeView signature gives 375A541A1EEB9A41...
+/// little-endian, so hexdumping the `CodeView` signature gives 375A541A1EEB9A41...
 /// where the server wants 1A545A37EB1E419A... - the same bytes, wrong order,
 /// and a 404 every time.
 pub fn symbol_key_from_signature(signature: &[u8; 16], age: u32) -> String {
@@ -241,7 +240,7 @@ struct SymbolReport {
     key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     url: Option<String>,
-    /// Absent unless the binary carries no CodeView record at all.
+    /// Absent unless the binary carries no `CodeView` record at all.
     #[serde(skip_serializing_if = "Option::is_none")]
     note: Option<String>,
 }
@@ -286,41 +285,41 @@ pub fn symbols_command(paths: &[PathBuf], server: &str, json_out: bool) -> Resul
             .debug_data
             .as_ref()
             .and_then(|d| d.codeview_pdb70_debug_info.as_ref());
-        let report = match cv {
-            Some(dbg) => {
-                let name = String::from_utf8_lossy(dbg.filename)
-                    .trim_end_matches('\0')
-                    .replace('\\', "/");
-                let name = Path::new(&name)
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown.pdb")
-                    .to_string();
-                let key = symbol_key_from_signature(&dbg.signature, dbg.age);
-                have += 1;
-                SymbolReport {
-                    file: stem_of(path),
-                    url: Some(format!(
-                        "{}/{}/{}/{}",
-                        server.trim_end_matches('/'),
-                        name,
-                        key,
-                        name
-                    )),
-                    pdb_name: Some(name),
-                    key: Some(key),
-                    note: None,
-                }
+        // map_or_else here would split a dozen lines of report-building across
+        // two closures and read worse; the if/let is clearer.
+        #[allow(clippy::option_if_let_else)]
+        let report = if let Some(dbg) = cv {
+            let name = String::from_utf8_lossy(dbg.filename)
+                .trim_end_matches('\0')
+                .replace('\\', "/");
+            let name = Path::new(&name)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown.pdb")
+                .to_string();
+            let key = symbol_key_from_signature(&dbg.signature, dbg.age);
+            have += 1;
+            SymbolReport {
+                file: stem_of(path),
+                url: Some(format!(
+                    "{}/{}/{}/{}",
+                    server.trim_end_matches('/'),
+                    name,
+                    key,
+                    name
+                )),
+                pdb_name: Some(name),
+                key: Some(key),
+                note: None,
             }
-            None => {
-                missing += 1;
-                SymbolReport {
-                    file: stem_of(path),
-                    pdb_name: None,
-                    key: None,
-                    url: None,
-                    note: Some("no CodeView record; this binary ships without symbols".into()),
-                }
+        } else {
+            missing += 1;
+            SymbolReport {
+                file: stem_of(path),
+                pdb_name: None,
+                key: None,
+                url: None,
+                note: Some("no CodeView record; this binary ships without symbols".into()),
             }
         };
         if !json_out {
@@ -452,7 +451,7 @@ pub fn catalog_command(history: &Path, out: Option<&Path>) -> Result<()> {
     }
     let mut modules = Vec::new();
     let mut entries: Vec<PathBuf> = fs::read_dir(history)?
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .map(|e| e.path())
         .filter(|p| p.is_dir())
         .collect();
@@ -464,7 +463,7 @@ pub fn catalog_command(history: &Path, out: Option<&Path>) -> Result<()> {
             continue;
         }
         let mut builds: Vec<PathBuf> = fs::read_dir(&builds_dir)?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .map(|e| e.path())
             .filter(|p| p.is_dir())
             .collect();
@@ -508,11 +507,13 @@ pub fn catalog_command(history: &Path, out: Option<&Path>) -> Result<()> {
     match out {
         Some(path) => {
             crate::diff::atomic_write(path, &json)?;
+            // display only; a human-readable GB figure needs no exact integer.
+            #[allow(clippy::cast_precision_loss)]
+            let gib = total as f64 / 1e9;
             println!(
-                "{} modules, {} builds, {:.1} GB of IR -> {}",
+                "{} modules, {} builds, {gib:.1} GB of IR -> {}",
                 catalog.modules.len(),
                 build_count,
-                total as f64 / 1e9,
                 path.display()
             );
         }
