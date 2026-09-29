@@ -285,43 +285,38 @@ pub fn symbols_command(paths: &[PathBuf], server: &str, json_out: bool) -> Resul
             .debug_data
             .as_ref()
             .and_then(|d| d.codeview_pdb70_debug_info.as_ref());
-        // map_or_else here would split a dozen lines of report-building across
-        // two closures and read worse; the if/let is clearer.
-        #[allow(clippy::option_if_let_else)]
-        let report = if let Some(dbg) = cv {
-            let name = String::from_utf8_lossy(dbg.filename)
-                .trim_end_matches('\0')
-                .replace('\\', "/");
-            let name = Path::new(&name)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("unknown.pdb")
-                .to_string();
-            let key = symbol_key_from_signature(&dbg.signature, dbg.age);
-            have += 1;
-            SymbolReport {
-                file: stem_of(path),
-                url: Some(format!(
-                    "{}/{}/{}/{}",
-                    server.trim_end_matches('/'),
-                    name,
-                    key,
-                    name
-                )),
-                pdb_name: Some(name),
-                key: Some(key),
-                note: None,
-            }
-        } else {
-            missing += 1;
-            SymbolReport {
+        let report = cv.map_or_else(
+            || SymbolReport {
                 file: stem_of(path),
                 pdb_name: None,
                 key: None,
                 url: None,
                 note: Some("no CodeView record; this binary ships without symbols".into()),
-            }
-        };
+            },
+            |dbg| {
+                let name = String::from_utf8_lossy(dbg.filename)
+                    .trim_end_matches('\0')
+                    .replace('\\', "/");
+                let name = Path::new(&name)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown.pdb")
+                    .to_string();
+                let key = symbol_key_from_signature(&dbg.signature, dbg.age);
+                SymbolReport {
+                    file: stem_of(path),
+                    url: Some(format!("{}/{name}/{key}/{name}", server.trim_end_matches('/'))),
+                    pdb_name: Some(name),
+                    key: Some(key),
+                    note: None,
+                }
+            },
+        );
+        if report.key.is_some() {
+            have += 1;
+        } else {
+            missing += 1;
+        }
         if !json_out {
             match (&report.pdb_name, &report.key) {
                 (Some(n), Some(k)) => println!("  {:<38} {:<34} {}", report.file, n, k),
@@ -507,11 +502,12 @@ pub fn catalog_command(history: &Path, out: Option<&Path>) -> Result<()> {
     match out {
         Some(path) => {
             crate::diff::atomic_write(path, &json)?;
-            // display only; a human-readable GB figure needs no exact integer.
-            #[allow(clippy::cast_precision_loss)]
-            let gib = total as f64 / 1e9;
+            // Integer math for the "N.N GB" figure avoids a lossy u64->f64 cast:
+            // whole gigabytes, then one tenth from the remainder.
+            let whole = total / 1_000_000_000;
+            let tenth = (total % 1_000_000_000) / 100_000_000;
             println!(
-                "{} modules, {} builds, {gib:.1} GB of IR -> {}",
+                "{} modules, {} builds, {whole}.{tenth} GB of IR -> {}",
                 catalog.modules.len(),
                 build_count,
                 path.display()

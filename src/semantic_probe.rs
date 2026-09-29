@@ -278,10 +278,6 @@ const fn default_timeout() -> u64 {
     10_000
 }
 
-// Decomposition debt: this validator is one long linear sequence of manifest
-// checks. Splitting it is a separate, test-guarded pass; allowed here so the
-// strict gate stays meaningful for everything else.
-#[allow(clippy::too_many_lines)]
 pub fn load_and_validate(db: &Database, binary: &Path, path: &Path) -> Result<ProbeManifest> {
     ensure!(
         binary
@@ -318,186 +314,187 @@ pub fn load_and_validate(db: &Database, binary: &Path, path: &Path) -> Result<Pr
     );
     let image_size = db.binary.image_size.unwrap_or(0);
     for operation in &manifest.operations {
-        match operation {
-            ProbeOperation::ReadRva { id, rva, size } => {
-                ensure!(!id.is_empty(), "probe operation has an empty id");
-                ensure!(
-                    *size > 0 && *size <= 4096,
-                    "probe read {id} size must be in 1..=4096"
-                );
-                ensure!(
-                    u64::from(*rva) + u64::from(*size) <= image_size,
-                    "probe read {id} exceeds image bounds"
-                );
-            }
-            ProbeOperation::CallNoArgs {
-                id,
-                symbol_id,
-                rva,
-                acknowledge_side_effects,
-            } => {
-                ensure!(
-                    *acknowledge_side_effects,
-                    "probe call {id} must acknowledge side effects"
-                );
-                let symbol = db
-                    .symbols
-                    .iter()
-                    .find(|symbol| symbol.id == *symbol_id)
-                    .with_context(|| format!("probe call {id} names unknown symbol {symbol_id}"))?;
-                ensure!(
-                    symbol.rva == *rva,
-                    "probe call {id} RVA does not match the exact-build IR"
-                );
-                ensure!(
-                    db.symbol_is_verified_callable(symbol_id),
-                    "probe call {id} is not proof-gated callable"
-                );
-                ensure!(
-                    symbol.sig.params.is_empty(),
-                    "probe call {id} is not a zero-argument function"
-                );
-                ensure!(
-                    symbol.sig.class.is_none() || symbol.sig.storage.as_deref() == Some("static"),
-                    "probe call {id} requires a this pointer"
-                );
-            }
-            ProbeOperation::CallEnumProbe {
-                id,
-                class_name,
-                enum_name,
-                object_size,
-                ctor_symbol_id,
-                ctor_rva,
-                dtor_symbol_id,
-                dtor_rva,
-                method_symbol_id,
-                vtable_rva,
-                vtable_object_offset,
-                vtable_slot,
-                range_start,
-                range_end,
-                out_int_params,
-                acknowledge_side_effects,
-            } => {
-                ensure!(!id.is_empty(), "probe operation has an empty id");
-                ensure!(
-                    *acknowledge_side_effects,
-                    "probe call {id} must acknowledge side effects"
-                );
-                ensure!(
-                    !enum_name.is_empty(),
-                    "probe call {id} needs an enum name to attach recovered values to"
-                );
-                ensure!(
-                    *range_end >= *range_start && (*range_end - *range_start) < 64,
-                    "probe call {id} enum range must be small and non-empty"
-                );
-                ensure!(
-                    *out_int_params <= 2,
-                    "probe call {id} supports at most 2 trailing int* out-params"
-                );
-                ensure!(
-                    *object_size > 0 && *object_size <= 4096,
-                    "probe call {id} object size must be in 1..=4096"
-                );
-
-                let class = db
-                    .semantic
-                    .classes
-                    .iter()
-                    .find(|class| class.qualified_name == *class_name)
-                    .with_context(|| format!("probe call {id} names unknown class {class_name}"))?;
-                ensure!(
-                    class.status == SemanticStatus::Verified,
-                    "probe call {id} class {class_name} is not a verified complete class"
-                );
-                if let Some(size) = class.size {
-                    ensure!(
-                        u64::from(*object_size) >= size,
-                        "probe call {id} object_size is smaller than the verified class size"
-                    );
-                }
-
-                let ctor = db
-                    .symbols
-                    .iter()
-                    .find(|symbol| symbol.id == *ctor_symbol_id)
-                    .with_context(|| {
-                        format!("probe call {id} names unknown constructor {ctor_symbol_id}")
-                    })?;
-                ensure!(
-                    ctor.rva == *ctor_rva,
-                    "probe call {id} constructor RVA does not match the exact-build IR"
-                );
-                ensure!(
-                    ctor.sig.class.as_deref() == Some(class_name.as_str()),
-                    "probe call {id} constructor is not a member of {class_name}"
-                );
-                ensure!(
-                    ctor.sig.params.is_empty(),
-                    "probe call {id} constructor is not zero-argument"
-                );
-                ensure!(
-                    db.symbol_is_verified_callable(ctor_symbol_id),
-                    "probe call {id} constructor is not proof-gated callable"
-                );
-
-                let dtor = db
-                    .symbols
-                    .iter()
-                    .find(|symbol| symbol.id == *dtor_symbol_id)
-                    .with_context(|| {
-                        format!("probe call {id} names unknown destructor {dtor_symbol_id}")
-                    })?;
-                ensure!(
-                    dtor.rva == *dtor_rva,
-                    "probe call {id} destructor RVA does not match the exact-build IR"
-                );
-                ensure!(
-                    dtor.sig.class.as_deref() == Some(class_name.as_str()),
-                    "probe call {id} destructor is not a member of {class_name}"
-                );
-                ensure!(
-                    dtor.sig.params.is_empty(),
-                    "probe call {id} destructor is not zero-argument"
-                );
-                ensure!(
-                    db.symbol_is_verified_callable(dtor_symbol_id),
-                    "probe call {id} destructor is not proof-gated callable"
-                );
-
-                let vtable = class
-                    .vtables
-                    .iter()
-                    .find(|vt| {
-                        vt.rva == *vtable_rva
-                            && vt.object_offset.unwrap_or(0) == *vtable_object_offset
-                    })
-                    .with_context(|| {
-                        format!("probe call {id} names an unknown vtable on {class_name}")
-                    })?;
-                ensure!(
-                    vtable.status == SemanticStatus::Verified,
-                    "probe call {id} vtable is not verified"
-                );
-                let slot = vtable
-                    .slots
-                    .iter()
-                    .find(|slot| slot.slot == *vtable_slot)
-                    .with_context(|| format!("probe call {id} names an unknown vtable slot"))?;
-                ensure!(
-                    slot.status == SemanticStatus::Verified,
-                    "probe call {id} vtable slot is not verified"
-                );
-                ensure!(
-                    slot.symbol_id.as_deref() == Some(method_symbol_id.as_str()),
-                    "probe call {id} vtable slot does not match the named method"
-                );
-            }
-        }
+        validate_operation(db, operation, image_size)?;
     }
     Ok(manifest)
+}
+
+/// Validate one probe operation against the exact-build IR.
+fn validate_operation(db: &Database, operation: &ProbeOperation, image_size: u64) -> Result<()> {
+    match operation {
+        ProbeOperation::ReadRva { id, rva, size } => {
+            ensure!(!id.is_empty(), "probe operation has an empty id");
+            ensure!(
+                *size > 0 && *size <= 4096,
+                "probe read {id} size must be in 1..=4096"
+            );
+            ensure!(
+                u64::from(*rva) + u64::from(*size) <= image_size,
+                "probe read {id} exceeds image bounds"
+            );
+        }
+        ProbeOperation::CallNoArgs {
+            id,
+            symbol_id,
+            rva,
+            acknowledge_side_effects,
+        } => {
+            ensure!(
+                *acknowledge_side_effects,
+                "probe call {id} must acknowledge side effects"
+            );
+            let symbol = db
+                .symbols
+                .iter()
+                .find(|symbol| symbol.id == *symbol_id)
+                .with_context(|| format!("probe call {id} names unknown symbol {symbol_id}"))?;
+            ensure!(
+                symbol.rva == *rva,
+                "probe call {id} RVA does not match the exact-build IR"
+            );
+            ensure!(
+                db.symbol_is_verified_callable(symbol_id),
+                "probe call {id} is not proof-gated callable"
+            );
+            ensure!(
+                symbol.sig.params.is_empty(),
+                "probe call {id} is not a zero-argument function"
+            );
+            ensure!(
+                symbol.sig.class.is_none() || symbol.sig.storage.as_deref() == Some("static"),
+                "probe call {id} requires a this pointer"
+            );
+        }
+        ProbeOperation::CallEnumProbe { .. } => validate_enum_probe(db, operation)?,
+    }
+    Ok(())
+}
+
+/// Validate a constructor or destructor named by an enum probe: it must exist,
+/// match the exact-build RVA, belong to the class, take no arguments, and be
+/// proof-gated callable. `role` is "constructor" or "destructor" for messages.
+fn validate_probe_member(
+    db: &Database,
+    id: &str,
+    class_name: &str,
+    role: &str,
+    symbol_id: &str,
+    expected_rva: u32,
+) -> Result<()> {
+    let member = db
+        .symbols
+        .iter()
+        .find(|symbol| symbol.id == *symbol_id)
+        .with_context(|| format!("probe call {id} names unknown {role} {symbol_id}"))?;
+    ensure!(
+        member.rva == expected_rva,
+        "probe call {id} {role} RVA does not match the exact-build IR"
+    );
+    ensure!(
+        member.sig.class.as_deref() == Some(class_name),
+        "probe call {id} {role} is not a member of {class_name}"
+    );
+    ensure!(
+        member.sig.params.is_empty(),
+        "probe call {id} {role} is not zero-argument"
+    );
+    ensure!(
+        db.symbol_is_verified_callable(symbol_id),
+        "probe call {id} {role} is not proof-gated callable"
+    );
+    Ok(())
+}
+
+/// Validate a `CallEnumProbe`: its class, constructor, destructor and the exact
+/// vtable slot must all be proof-gated in the IR before the runtime probe runs.
+fn validate_enum_probe(db: &Database, operation: &ProbeOperation) -> Result<()> {
+    let ProbeOperation::CallEnumProbe {
+        id,
+        class_name,
+        enum_name,
+        object_size,
+        ctor_symbol_id,
+        ctor_rva,
+        dtor_symbol_id,
+        dtor_rva,
+        method_symbol_id,
+        vtable_rva,
+        vtable_object_offset,
+        vtable_slot,
+        range_start,
+        range_end,
+        out_int_params,
+        acknowledge_side_effects,
+    } = operation
+    else {
+        return Ok(());
+    };
+
+    ensure!(!id.is_empty(), "probe operation has an empty id");
+    ensure!(
+        *acknowledge_side_effects,
+        "probe call {id} must acknowledge side effects"
+    );
+    ensure!(
+        !enum_name.is_empty(),
+        "probe call {id} needs an enum name to attach recovered values to"
+    );
+    ensure!(
+        *range_end >= *range_start && (*range_end - *range_start) < 64,
+        "probe call {id} enum range must be small and non-empty"
+    );
+    ensure!(
+        *out_int_params <= 2,
+        "probe call {id} supports at most 2 trailing int* out-params"
+    );
+    ensure!(
+        *object_size > 0 && *object_size <= 4096,
+        "probe call {id} object size must be in 1..=4096"
+    );
+
+    let class = db
+        .semantic
+        .classes
+        .iter()
+        .find(|class| class.qualified_name == *class_name)
+        .with_context(|| format!("probe call {id} names unknown class {class_name}"))?;
+    ensure!(
+        class.status == SemanticStatus::Verified,
+        "probe call {id} class {class_name} is not a verified complete class"
+    );
+    if let Some(size) = class.size {
+        ensure!(
+            u64::from(*object_size) >= size,
+            "probe call {id} object_size is smaller than the verified class size"
+        );
+    }
+
+    validate_probe_member(db, id, class_name, "constructor", ctor_symbol_id, *ctor_rva)?;
+    validate_probe_member(db, id, class_name, "destructor", dtor_symbol_id, *dtor_rva)?;
+
+    let vtable = class
+        .vtables
+        .iter()
+        .find(|vt| vt.rva == *vtable_rva && vt.object_offset.unwrap_or(0) == *vtable_object_offset)
+        .with_context(|| format!("probe call {id} names an unknown vtable on {class_name}"))?;
+    ensure!(
+        vtable.status == SemanticStatus::Verified,
+        "probe call {id} vtable is not verified"
+    );
+    let slot = vtable
+        .slots
+        .iter()
+        .find(|slot| slot.slot == *vtable_slot)
+        .with_context(|| format!("probe call {id} names an unknown vtable slot"))?;
+    ensure!(
+        slot.status == SemanticStatus::Verified,
+        "probe call {id} vtable slot is not verified"
+    );
+    ensure!(
+        slot.symbol_id.as_deref() == Some(method_symbol_id.as_str()),
+        "probe call {id} vtable slot does not match the named method"
+    );
+    Ok(())
 }
 
 pub fn run_isolated(binary: &Path, manifest: &Path, out: &Path, timeout_ms: u64) -> Result<()> {
@@ -616,15 +613,6 @@ pub fn helper(binary: &Path, manifest_path: &Path, out: &Path) -> Result<()> {
 // vtables, call, capture). A later pass can lift the per-object step out; kept
 // whole for now so the strict gate stays green without touching probe behavior.
 #[cfg(windows)]
-// too_many_lines: decomposition debt (see above). The cast allows cover the
-// deliberate vtable walk: a stored object offset applied as isize, and reading
-// a vtable pointer through a `*const *const usize` - both are ABI-guaranteed at
-// the point of use, and are the intrinsic shape of calling a COM method by slot.
-#[allow(
-    clippy::too_many_lines,
-    clippy::cast_possible_truncation,
-    clippy::cast_ptr_alignment
-)]
 fn platform_probe(binary: &Path, manifest: &ProbeManifest) -> Result<Vec<ProbeObservation>> {
     use std::ffi::{OsStr, c_void};
     use std::os::windows::ffi::OsStrExt;
@@ -672,96 +660,108 @@ fn platform_probe(binary: &Path, manifest: &ProbeManifest) -> Result<Vec<ProbeOb
                     detail: format!("0x{value:X}"),
                 });
             }
-            ProbeOperation::CallEnumProbe {
-                id,
-                class_name,
-                enum_name,
-                object_size,
-                ctor_rva,
-                dtor_rva,
-                vtable_object_offset,
-                vtable_slot,
-                range_start,
-                range_end,
-                out_int_params,
-                ..
-            } => {
-                let size =
-                    usize::try_from(*object_size).context("object size does not fit usize")?;
-                let mut buffer = vec![0u8; size];
-                let this_ptr = buffer.as_mut_ptr();
-
-                let ctor_offset =
-                    usize::try_from(*ctor_rva).context("ctor RVA does not fit usize")?;
-                let ctor_addr = unsafe { (module as *const u8).add(ctor_offset) };
-                let ctor_fn: unsafe extern "system" fn(*mut u8) =
-                    unsafe { std::mem::transmute(ctor_addr) };
-                unsafe { ctor_fn(this_ptr) };
-
-                let call_this = unsafe { this_ptr.offset(*vtable_object_offset as isize) };
-                let vtable_ptr = unsafe { *(call_this as *const *const usize) };
-                let method_addr = unsafe { *vtable_ptr.add(*vtable_slot as usize) } as *const u8;
-
-                let mut results = Vec::new();
-                for candidate in *range_start..=*range_end {
-                    let mut out1: i32 = 0;
-                    let mut out2: i32 = 0;
-                    let hr: i32 = unsafe {
-                        match out_int_params {
-                            0 => {
-                                let f: unsafe extern "system" fn(*mut u8, i32) -> i32 =
-                                    std::mem::transmute(method_addr);
-                                f(call_this, candidate)
-                            }
-                            1 => {
-                                let f: unsafe extern "system" fn(*mut u8, i32, *mut i32) -> i32 =
-                                    std::mem::transmute(method_addr);
-                                f(call_this, candidate, &raw mut out1)
-                            }
-                            _ => {
-                                let f: unsafe extern "system" fn(
-                                    *mut u8,
-                                    i32,
-                                    *mut i32,
-                                    *mut i32,
-                                )
-                                    -> i32 = std::mem::transmute(method_addr);
-                                f(call_this, candidate, &raw mut out1, &raw mut out2)
-                            }
-                        }
-                    };
-                    results.push(json!({
-                        "value": candidate,
-                        "hresult": hr,
-                        "succeeded": hr >= 0,
-                        "out1": out1,
-                        "out2": out2,
-                    }));
-                }
-
-                let dtor_offset =
-                    usize::try_from(*dtor_rva).context("dtor RVA does not fit usize")?;
-                let dtor_addr = unsafe { (module as *const u8).add(dtor_offset) };
-                let dtor_fn: unsafe extern "system" fn(*mut u8) =
-                    unsafe { std::mem::transmute(dtor_addr) };
-                unsafe { dtor_fn(this_ptr) };
-
-                let detail = json!({
-                    "class_name": class_name,
-                    "enum_name": enum_name,
-                    "results": results,
-                })
-                .to_string();
-                observations.push(ProbeObservation {
-                    id: id.clone(),
-                    status: "enum-range".into(),
-                    detail,
-                });
+            ProbeOperation::CallEnumProbe { .. } => {
+                observations.push(run_enum_probe(module.cast::<u8>(), operation)?);
             }
         }
     }
     unsafe { FreeLibrary(module) };
     Ok(observations)
+}
+
+/// Construct the object, call one method across a small integer range, destruct.
+///
+/// This is the intrinsic shape of invoking a COM method by vtable slot; every
+/// pointer step is deliberate and bounds were validated in `validate_enum_probe`
+/// before this runs.
+#[cfg(windows)]
+fn run_enum_probe(module: *const u8, operation: &ProbeOperation) -> Result<ProbeObservation> {
+    let ProbeOperation::CallEnumProbe {
+        id,
+        class_name,
+        enum_name,
+        object_size,
+        ctor_rva,
+        dtor_rva,
+        vtable_object_offset,
+        vtable_slot,
+        range_start,
+        range_end,
+        out_int_params,
+        ..
+    } = operation
+    else {
+        return Err(anyhow::anyhow!("run_enum_probe called on a non-enum operation"));
+    };
+
+    let size = usize::try_from(*object_size).context("object size does not fit usize")?;
+    let mut buffer = vec![0u8; size];
+    let this_ptr = buffer.as_mut_ptr();
+
+    let ctor_offset = usize::try_from(*ctor_rva).context("ctor RVA does not fit usize")?;
+    let ctor_addr = unsafe { module.add(ctor_offset) };
+    let ctor_fn: unsafe extern "system" fn(*mut u8) = unsafe { std::mem::transmute(ctor_addr) };
+    unsafe { ctor_fn(this_ptr) };
+
+    let object_offset =
+        isize::try_from(*vtable_object_offset).context("vtable object offset does not fit isize")?;
+    let slot_index = usize::try_from(*vtable_slot).context("vtable slot does not fit usize")?;
+    let call_this = unsafe { this_ptr.offset(object_offset) };
+    // The vtable pointer sits at the object's head, pointer-aligned by the C++
+    // ABI - a fact clippy cannot prove, so the alignment lint is allowed on just
+    // this read.
+    #[allow(clippy::cast_ptr_alignment)]
+    let vtable_ptr = unsafe { *call_this.cast::<*const usize>() };
+    let method_addr = unsafe { *vtable_ptr.add(slot_index) } as *const u8;
+
+    let mut results = Vec::new();
+    for candidate in *range_start..=*range_end {
+        let mut out1: i32 = 0;
+        let mut out2: i32 = 0;
+        let hr: i32 = unsafe {
+            match out_int_params {
+                0 => {
+                    let f: unsafe extern "system" fn(*mut u8, i32) -> i32 =
+                        std::mem::transmute(method_addr);
+                    f(call_this, candidate)
+                }
+                1 => {
+                    let f: unsafe extern "system" fn(*mut u8, i32, *mut i32) -> i32 =
+                        std::mem::transmute(method_addr);
+                    f(call_this, candidate, &raw mut out1)
+                }
+                _ => {
+                    let f: unsafe extern "system" fn(*mut u8, i32, *mut i32, *mut i32) -> i32 =
+                        std::mem::transmute(method_addr);
+                    f(call_this, candidate, &raw mut out1, &raw mut out2)
+                }
+            }
+        };
+        results.push(json!({
+            "value": candidate,
+            "hresult": hr,
+            "succeeded": hr >= 0,
+            "out1": out1,
+            "out2": out2,
+        }));
+    }
+
+    let dtor_offset = usize::try_from(*dtor_rva).context("dtor RVA does not fit usize")?;
+    let dtor_addr = unsafe { module.add(dtor_offset) };
+    let dtor_fn: unsafe extern "system" fn(*mut u8) = unsafe { std::mem::transmute(dtor_addr) };
+    unsafe { dtor_fn(this_ptr) };
+
+    let detail = json!({
+        "class_name": class_name,
+        "enum_name": enum_name,
+        "results": results,
+    })
+    .to_string();
+    Ok(ProbeObservation {
+        id: id.clone(),
+        status: "enum-range".into(),
+        detail,
+    })
 }
 
 #[cfg(not(windows))]

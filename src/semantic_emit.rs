@@ -648,10 +648,6 @@ fn cpp_integer_type(name: &str) -> &'static str {
 /// signedness, so a value may only be representable after wrapping into that
 /// type's range (e.g. `-4093` stored as `4294963203` under an `i32`).
 ///
-/// The i128 below is overflow-safe scratch for the `rem_euclid` over an enum
-/// whose underlying type is at most 64-bit; the reduced result fits i64 by
-/// construction, so narrowing back is exact.
-#[allow(clippy::cast_possible_truncation)]
 fn project_enum_value(underlying: &str, value: i64) -> i64 {
     let (bits, signed) = match underlying {
         "i8" => (8, true),
@@ -660,21 +656,18 @@ fn project_enum_value(underlying: &str, value: i64) -> i64 {
         "u16" => (16, false),
         "i32" => (32, true),
         "u32" => (32, false),
-        "i64" => (64, true),
-        "u64" => (64, false),
+        // A 64-bit underlying type already fills the i64 the value is stored in,
+        // and an unknown type is passed through - both return the value as-is.
         _ => return value,
     };
-    let modulus: i128 = 1 << bits;
-    let wrapped: i128 = i128::from(value).rem_euclid(modulus);
-    if signed {
-        let half = modulus >> 1;
-        if wrapped >= half {
-            (wrapped - modulus) as i64
-        } else {
-            wrapped as i64
-        }
+    // bits is 8, 16 or 32 here, so the modulus and every intermediate stay well
+    // inside i64: no i128 scratch and no narrowing cast are needed.
+    let modulus: i64 = 1_i64 << bits;
+    let wrapped = value.rem_euclid(modulus);
+    if signed && wrapped >= modulus / 2 {
+        wrapped - modulus
     } else {
-        wrapped as i64
+        wrapped
     }
 }
 
