@@ -13,6 +13,8 @@ pub enum Provenance {
     PeGuardCf,
     PeCallTarget,
     PeTailTarget,
+    PeSafeSeh,
+    PeEntryPoint,
     Pdb,
     Demangler,
     R2Infer,

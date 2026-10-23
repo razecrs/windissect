@@ -50,6 +50,8 @@ pub fn from_pe(dll: &Path, pdb: Option<&Path>, retain_pdb_records: bool) -> Resu
         symbols = merge_unwind_symbols(symbols, extract_unwind_functions(&pe, base));
         symbols = merge_new_rvas(symbols, extract_unwind_handlers(&pe, base));
         symbols = merge_new_rvas(symbols, extract_guard_cf_functions(&pe, &bytes, base));
+        symbols = merge_new_rvas(symbols, extract_safe_seh_handlers(&pe, &bytes, base));
+        symbols = merge_new_rvas(symbols, extract_entry_point(&pe, base));
     }
     let (pdb_symbols, pdb_coverage, pdb_records) =
         merge_pdb(&pe, pdb, base, &export_rvas, retain_pdb_records)?;
@@ -208,20 +210,7 @@ fn extract_unwind_handlers(pe: &PE<'_>, base: u64) -> Vec<Symbol> {
     }
     handlers
         .into_iter()
-        .map(|rva| {
-            let name = format!("sub_{rva:08X}");
-            let mut symbol = blank(
-                name.clone(),
-                name,
-                base + u64::from(rva),
-                false,
-                Provenance::PeUnwindHandler,
-            );
-            symbol.rva = rva;
-            symbol.is_code = true;
-            symbol.kind = Kind::CFunc;
-            symbol
-        })
+        .map(|rva| anonymous_code(base, rva, Provenance::PeUnwindHandler))
         .collect()
 }
 
@@ -254,27 +243,62 @@ fn extract_guard_cf_functions(pe: &PE<'_>, bytes: &[u8], base: u64) -> Vec<Symbo
         return Vec::new();
     };
 
-    guard_cf_rvas(bytes, table_offset, count, stride)
+    rva_table(bytes, table_offset, count, stride)
         .into_iter()
         .filter(|rva| *rva != 0 && rva_is_executable(pe, *rva))
-        .map(|rva| {
-            let name = format!("sub_{rva:08X}");
-            let mut symbol = blank(
-                name.clone(),
-                name,
-                base + u64::from(rva),
-                false,
-                Provenance::PeGuardCf,
-            );
-            symbol.rva = rva;
-            symbol.is_code = true;
-            symbol.kind = Kind::CFunc;
-            symbol
-        })
+        .map(|rva| anonymous_code(base, rva, Provenance::PeGuardCf))
         .collect()
 }
 
-fn guard_cf_rvas(bytes: &[u8], offset: usize, count: usize, stride: usize) -> BTreeSet<u32> {
+/// Recover x86 `SafeSEH` handlers: the load config lists the RVA of every
+/// exception handler the image registers, each one a callable entry point.
+fn extract_safe_seh_handlers(pe: &PE<'_>, bytes: &[u8], base: u64) -> Vec<Symbol> {
+    if pe.header.coff_header.machine != 0x014C {
+        return Vec::new();
+    }
+    let Some(directory) = pe.load_config_data.as_ref().map(|config| &config.directory) else {
+        return Vec::new();
+    };
+    let Some(table_vaddr) = directory.se_handler_table.filter(|value| *value != 0) else {
+        return Vec::new();
+    };
+    let Some(count) = directory
+        .se_handler_count
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(table_offset) = vaddr_to_file_offset(pe, table_vaddr) else {
+        return Vec::new();
+    };
+    rva_table(bytes, table_offset, count, 4)
+        .into_iter()
+        .filter(|rva| *rva != 0 && rva_is_executable(pe, *rva))
+        .map(|rva| anonymous_code(base, rva, Provenance::PeSafeSeh))
+        .collect()
+}
+
+/// The optional header's entry point: the loader calls it, so it is a
+/// function start on every architecture.
+fn extract_entry_point(pe: &PE<'_>, base: u64) -> Vec<Symbol> {
+    let rva = pe.entry;
+    if rva == 0 || !rva_is_executable(pe, rva) {
+        return Vec::new();
+    }
+    vec![anonymous_code(base, rva, Provenance::PeEntryPoint)]
+}
+
+/// An anonymous code entry proven by PE metadata, named by its RVA.
+fn anonymous_code(base: u64, rva: u32, provenance: Provenance) -> Symbol {
+    let name = format!("sub_{rva:08X}");
+    let mut symbol = blank(name.clone(), name, base + u64::from(rva), false, provenance);
+    symbol.rva = rva;
+    symbol.is_code = true;
+    symbol.kind = Kind::CFunc;
+    symbol
+}
+
+fn rva_table(bytes: &[u8], offset: usize, count: usize, stride: usize) -> BTreeSet<u32> {
     if stride < 4 {
         return BTreeSet::new();
     }
@@ -536,7 +560,7 @@ fn codeview_guid(g: &[u8; 16]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{blank, guard_cf_rvas, merge_exact_symbols};
+    use super::{blank, merge_exact_symbols, rva_table};
     use crate::model::Provenance;
 
     #[test]
@@ -573,7 +597,7 @@ mod tests {
         let bytes = [
             0x10, 0x20, 0x00, 0x00, 0xAA, 0xBB, 0x30, 0x40, 0x00, 0x00, 0xCC, 0xDD,
         ];
-        let rvas = guard_cf_rvas(&bytes, 0, 2, 6);
+        let rvas = rva_table(&bytes, 0, 2, 6);
         assert_eq!(rvas.into_iter().collect::<Vec<_>>(), vec![0x2010, 0x4030]);
     }
 }

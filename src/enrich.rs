@@ -1,6 +1,7 @@
 //! Phase C: Static Enrichment: disassembly, reloc-normalized body hashing,
 //! call-graph construction, function size calculation, and Win32 import tracking.
 
+use crate::descent;
 use crate::model::{
     Capability, CapabilityStatus, Confidence, ControlFlowEdge, Coverage, Database,
     FunctionAnalysis, InstructionRecord, Kind, Provenance, Signature, Symbol,
@@ -23,6 +24,7 @@ pub fn enrich_database(db: &mut Database, pe_bytes: &[u8]) -> Result<()> {
         ),
     };
 
+    discover_by_descent(db, pe_bytes, &pe, bitness);
     discover_direct_call_targets(db, pe_bytes, &pe, bitness);
     discover_tail_jump_targets(db, pe_bytes, &pe, bitness);
     calculate_function_sizes(db, &pe);
@@ -35,6 +37,81 @@ pub fn enrich_database(db: &mut Database, pe_bytes: &[u8]) -> Result<()> {
         reason: format!("{} unique code RVAs decoded", db.functions.len()),
     });
     Ok(())
+}
+
+/// Follow control flow from every evidenced entry to find the functions it
+/// calls and each body's contiguous extent. On x86 this is the main source of
+/// both. On x64 the exception directory has already set exact extents, which
+/// are kept; descent fills only the entries it left without one (leaf
+/// functions, Guard CF targets, thunks).
+fn discover_by_descent(db: &mut Database, pe_bytes: &[u8], pe: &goblin::pe::PE<'_>, bitness: u32) {
+    if db
+        .symbols
+        .iter()
+        .any(|symbol| symbol.provenance == Provenance::Pdb)
+    {
+        return;
+    }
+
+    let seeds = db
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.rva != 0 && symbol.is_code && symbol.forwarder.is_none())
+        .map(|symbol| symbol.rva)
+        .collect::<BTreeSet<_>>();
+    let discovery = descent::discover(pe_bytes, pe, bitness, &seeds);
+
+    for symbol in &mut db.symbols {
+        if symbol.size == 0
+            && let Some(&extent) = discovery.extents.get(&symbol.rva)
+        {
+            symbol.size = extent;
+        }
+    }
+    let new_entries = discovery
+        .call_targets
+        .iter()
+        .map(|rva| (*rva, Provenance::PeCallTarget))
+        .chain(
+            discovery
+                .tail_targets
+                .iter()
+                .map(|rva| (*rva, Provenance::PeTailTarget)),
+        );
+    for (rva, provenance) in new_entries {
+        let mut symbol = candidate_symbol(pe.image_base, rva, provenance);
+        symbol.size = discovery.extents.get(&rva).copied().unwrap_or(0);
+        db.symbols.push(symbol);
+    }
+}
+
+/// An anonymous code entry recovered without a PDB. The entry is evidenced;
+/// the name is a placeholder and the extent, if any, is filled in later.
+fn candidate_symbol(image_base: u64, rva: u32, provenance: Provenance) -> Symbol {
+    let name = format!("sub_{rva:08X}");
+    Symbol {
+        id: name.clone(),
+        mangled: name,
+        demangled: None,
+        vaddr: image_base + u64::from(rva),
+        rva,
+        ordinal: None,
+        size: 0,
+        procedure_size: None,
+        is_code: true,
+        forwarder: None,
+        body_hash: String::new(),
+        exported: false,
+        library: false,
+        kind: Kind::CFunc,
+        coverage: Coverage::Auto,
+        provenance,
+        confidence: Confidence::Likely,
+        sig: Signature::default(),
+        callers: Vec::new(),
+        calls: Vec::new(),
+        imports: Vec::new(),
+    }
 }
 
 /// Follow a direct jump only when it is the first instruction at an already
@@ -92,30 +169,11 @@ fn discover_tail_jump_targets(
 
     for rva in candidates {
         known_rvas.insert(rva);
-        let name = format!("sub_{rva:08X}");
-        db.symbols.push(Symbol {
-            id: name.clone(),
-            mangled: name,
-            demangled: None,
-            vaddr: pe.image_base + u64::from(rva),
+        db.symbols.push(candidate_symbol(
+            pe.image_base,
             rva,
-            ordinal: None,
-            size: 0,
-            procedure_size: None,
-            is_code: true,
-            forwarder: None,
-            body_hash: String::new(),
-            exported: false,
-            library: false,
-            kind: Kind::CFunc,
-            coverage: Coverage::Auto,
-            provenance: Provenance::PeTailTarget,
-            confidence: Confidence::Likely,
-            sig: Signature::default(),
-            callers: Vec::new(),
-            calls: Vec::new(),
-            imports: Vec::new(),
-        });
+            Provenance::PeTailTarget,
+        ));
     }
 }
 
@@ -169,30 +227,11 @@ fn discover_direct_call_targets(
             continue;
         }
         known_rvas.insert(rva);
-        let name = format!("sub_{rva:08X}");
-        db.symbols.push(Symbol {
-            id: name.clone(),
-            mangled: name,
-            demangled: None,
-            vaddr: pe.image_base + u64::from(rva),
+        db.symbols.push(candidate_symbol(
+            pe.image_base,
             rva,
-            ordinal: None,
-            size: 0,
-            procedure_size: None,
-            is_code: true,
-            forwarder: None,
-            body_hash: String::new(),
-            exported: false,
-            library: false,
-            kind: Kind::CFunc,
-            coverage: Coverage::Auto,
-            provenance: Provenance::PeCallTarget,
-            confidence: Confidence::Likely,
-            sig: Signature::default(),
-            callers: Vec::new(),
-            calls: Vec::new(),
-            imports: Vec::new(),
-        });
+            Provenance::PeCallTarget,
+        ));
     }
 }
 

@@ -2,6 +2,7 @@
 
 mod archive;
 mod demangle;
+mod descent;
 mod diff;
 mod docs;
 mod emit;
@@ -896,6 +897,8 @@ fn report(db: &Database, out: &Path) {
     let guard_cf_functions = provenance_count(Provenance::PeGuardCf);
     let call_targets = provenance_count(Provenance::PeCallTarget);
     let tail_targets = provenance_count(Provenance::PeTailTarget);
+    let safe_seh_handlers = provenance_count(Provenance::PeSafeSeh);
+    let entry_points = provenance_count(Provenance::PeEntryPoint);
     let other = n
         - pdb_named
         - exported_symbols
@@ -903,11 +906,13 @@ fn report(db: &Database, out: &Path) {
         - unwind_handlers
         - guard_cf_functions
         - call_targets
-        - tail_targets;
+        - tail_targets
+        - safe_seh_handlers
+        - entry_points;
     println!(
         "provenance: {pdb_named} PDB, {exported_symbols} export table, \
          {unwind_functions} PE unwind, {unwind_handlers} unwind handlers, \
-         {guard_cf_functions} Guard CF, \
+         {guard_cf_functions} Guard CF, {safe_seh_handlers} SafeSEH, {entry_points} entry point, \
          {call_targets} direct-call candidates, {tail_targets} tail-target candidates, {other} other"
     );
 }
