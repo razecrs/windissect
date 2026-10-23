@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(sig.namespace.as_deref(), Some("DirectUI"));
         assert_eq!(sig.class.as_deref(), Some("DUIXmlParser"));
         assert_eq!(sig.method.as_deref(), Some("GetGetSheetCallback"));
-        assert!(sig.params.is_empty());
+        assert_eq!(sig.params, Vec::new());
         assert_eq!(sig.callconv.as_deref(), Some("__cdecl"));
     }
 }

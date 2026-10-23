@@ -1985,7 +1985,7 @@ mod tests {
 
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].state, RecoveryJobState::Candidate);
-        assert!(jobs[0].satisfied_claim_ids.is_empty());
+        assert_eq!(jobs[0].satisfied_claim_ids, Vec::<String>::new());
     }
 
     #[test]

@@ -865,7 +865,7 @@ fn report(db: &Database, out: &Path) {
         "binary:     {} · pdb_guid {:?}",
         db.binary.file, db.binary.pdb_guid
     );
-    println!("symbols:    {n}  ({exported} exported, {internal} internal-from-pdb)");
+    println!("symbols:    {n}  ({exported} exported, {internal} internal)");
     println!("library:    {library} boilerplate (flagged, emitters skip)");
     let parsed_percent = if n == 0 {
         0.0
@@ -880,15 +880,35 @@ fn report(db: &Database, out: &Path) {
     for (k, c) in kinds {
         println!("  {k:10} {c}");
     }
-    // Provenance is preserved as the identity source (export vs pdb).
-    let pdb_named = db
-        .symbols
-        .iter()
-        .filter(|s| s.provenance == Provenance::Pdb)
-        .count();
+    // Provenance is preserved as the identity source. Keep the categories
+    // explicit: no-PDB recovery adds linker-authored unwind records, so
+    // treating every non-PDB symbol as an export would be misleading.
+    let provenance_count = |provenance| {
+        db.symbols
+            .iter()
+            .filter(|symbol| symbol.provenance == provenance)
+            .count()
+    };
+    let pdb_named = provenance_count(Provenance::Pdb);
+    let exported_symbols = provenance_count(Provenance::PeExport);
+    let unwind_functions = provenance_count(Provenance::PeUnwind);
+    let unwind_handlers = provenance_count(Provenance::PeUnwindHandler);
+    let guard_cf_functions = provenance_count(Provenance::PeGuardCf);
+    let call_targets = provenance_count(Provenance::PeCallTarget);
+    let tail_targets = provenance_count(Provenance::PeTailTarget);
+    let other = n
+        - pdb_named
+        - exported_symbols
+        - unwind_functions
+        - unwind_handlers
+        - guard_cf_functions
+        - call_targets
+        - tail_targets;
     println!(
-        "provenance: {pdb_named} named from PDB, {} from export table",
-        n - pdb_named
+        "provenance: {pdb_named} PDB, {exported_symbols} export table, \
+         {unwind_functions} PE unwind, {unwind_handlers} unwind handlers, \
+         {guard_cf_functions} Guard CF, \
+         {call_targets} direct-call candidates, {tail_targets} tail-target candidates, {other} other"
     );
 }
 

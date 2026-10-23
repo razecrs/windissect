@@ -2,8 +2,8 @@
 //! call-graph construction, function size calculation, and Win32 import tracking.
 
 use crate::model::{
-    Capability, CapabilityStatus, ControlFlowEdge, Database, FunctionAnalysis, InstructionRecord,
-    Kind,
+    Capability, CapabilityStatus, Confidence, ControlFlowEdge, Coverage, Database,
+    FunctionAnalysis, InstructionRecord, Kind, Provenance, Signature, Symbol,
 };
 use anyhow::{Context, Result};
 use iced_x86::{
@@ -23,6 +23,8 @@ pub fn enrich_database(db: &mut Database, pe_bytes: &[u8]) -> Result<()> {
         ),
     };
 
+    discover_direct_call_targets(db, pe_bytes, &pe, bitness);
+    discover_tail_jump_targets(db, pe_bytes, &pe, bitness);
     calculate_function_sizes(db, &pe);
     let analysis = analyze_functions(db, pe_bytes, &pe, bitness);
     apply_analysis(db, analysis);
@@ -33,6 +35,198 @@ pub fn enrich_database(db: &mut Database, pe_bytes: &[u8]) -> Result<()> {
         reason: format!("{} unique code RVAs decoded", db.functions.len()),
     });
     Ok(())
+}
+
+/// Follow a direct jump only when it is the first instruction at an already
+/// evidenced anonymous entry point. This identifies tail-call/thunk targets
+/// without treating ordinary intra-function branches as function starts.
+fn discover_tail_jump_targets(
+    db: &mut Database,
+    pe_bytes: &[u8],
+    pe: &goblin::pe::PE<'_>,
+    bitness: u32,
+) {
+    if db
+        .symbols
+        .iter()
+        .any(|symbol| symbol.provenance == Provenance::Pdb)
+    {
+        return;
+    }
+
+    let mut known_rvas = db
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.rva != 0)
+        .map(|symbol| symbol.rva)
+        .collect::<BTreeSet<_>>();
+    let mut candidates = BTreeSet::new();
+    for symbol in db.symbols.iter().filter(|symbol| {
+        matches!(
+            symbol.provenance,
+            Provenance::PeCallTarget | Provenance::PeGuardCf
+        ) && symbol.is_code
+    }) {
+        let Some(file_offset) = rva_to_offset(pe, symbol.vaddr) else {
+            continue;
+        };
+        let file_end = file_offset.saturating_add(15).min(pe_bytes.len());
+        let Some(bytes) = pe_bytes.get(file_offset..file_end) else {
+            continue;
+        };
+        let mut decoder = Decoder::with_ip(bitness, bytes, symbol.vaddr, DecoderOptions::NONE);
+        let instruction = decoder.decode();
+        if instruction.flow_control() == FlowControl::UnconditionalBranch
+            && matches!(
+                instruction.op0_kind(),
+                OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
+            )
+            && let Some(target) = instruction.near_branch_target().checked_sub(pe.image_base)
+            && let Ok(rva) = u32::try_from(target)
+            && !known_rvas.contains(&rva)
+            && rva_is_executable(pe, rva)
+        {
+            candidates.insert(rva);
+        }
+    }
+
+    for rva in candidates {
+        known_rvas.insert(rva);
+        let name = format!("sub_{rva:08X}");
+        db.symbols.push(Symbol {
+            id: name.clone(),
+            mangled: name,
+            demangled: None,
+            vaddr: pe.image_base + u64::from(rva),
+            rva,
+            ordinal: None,
+            size: 0,
+            procedure_size: None,
+            is_code: true,
+            forwarder: None,
+            body_hash: String::new(),
+            exported: false,
+            library: false,
+            kind: Kind::CFunc,
+            coverage: Coverage::Auto,
+            provenance: Provenance::PeTailTarget,
+            confidence: Confidence::Likely,
+            sig: Signature::default(),
+            callers: Vec::new(),
+            calls: Vec::new(),
+            imports: Vec::new(),
+        });
+    }
+}
+
+/// Add anonymous candidate functions reached by direct calls from exact unwind
+/// bodies. A direct target is strong code-entry evidence, but linear decoding
+/// alone does not prove reachability of every decoded instruction, so these
+/// remain `Likely` rather than `Certain`.
+fn discover_direct_call_targets(
+    db: &mut Database,
+    pe_bytes: &[u8],
+    pe: &goblin::pe::PE<'_>,
+    bitness: u32,
+) {
+    if db
+        .symbols
+        .iter()
+        .any(|symbol| symbol.provenance == Provenance::Pdb)
+    {
+        return;
+    }
+
+    let mut known_rvas = db
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.rva != 0)
+        .map(|symbol| symbol.rva)
+        .collect::<BTreeSet<_>>();
+    let mut candidates = BTreeSet::new();
+    for symbol in db.symbols.iter().filter(|symbol| {
+        symbol.procedure_size == Some(symbol.size) && symbol.size != 0 && symbol.is_code
+    }) {
+        let Some(file_offset) = rva_to_offset(pe, symbol.vaddr) else {
+            continue;
+        };
+        let Some(file_end) = file_offset.checked_add(symbol.size as usize) else {
+            continue;
+        };
+        let Some(bytes) = pe_bytes.get(file_offset..file_end) else {
+            continue;
+        };
+        candidates.extend(direct_call_target_rvas(
+            bytes,
+            bitness,
+            symbol.vaddr,
+            pe.image_base,
+        ));
+    }
+
+    for rva in candidates {
+        if known_rvas.contains(&rva) || !rva_is_executable(pe, rva) {
+            continue;
+        }
+        known_rvas.insert(rva);
+        let name = format!("sub_{rva:08X}");
+        db.symbols.push(Symbol {
+            id: name.clone(),
+            mangled: name,
+            demangled: None,
+            vaddr: pe.image_base + u64::from(rva),
+            rva,
+            ordinal: None,
+            size: 0,
+            procedure_size: None,
+            is_code: true,
+            forwarder: None,
+            body_hash: String::new(),
+            exported: false,
+            library: false,
+            kind: Kind::CFunc,
+            coverage: Coverage::Auto,
+            provenance: Provenance::PeCallTarget,
+            confidence: Confidence::Likely,
+            sig: Signature::default(),
+            callers: Vec::new(),
+            calls: Vec::new(),
+            imports: Vec::new(),
+        });
+    }
+}
+
+fn direct_call_target_rvas(
+    bytes: &[u8],
+    bitness: u32,
+    start_vaddr: u64,
+    image_base: u64,
+) -> BTreeSet<u32> {
+    let mut targets = BTreeSet::new();
+    let mut decoder = Decoder::with_ip(bitness, bytes, start_vaddr, DecoderOptions::NONE);
+    while decoder.can_decode() {
+        let instruction = decoder.decode();
+        if instruction.flow_control() == FlowControl::Call
+            && matches!(
+                instruction.op0_kind(),
+                OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64
+            )
+            && let Some(rva) = instruction.near_branch_target().checked_sub(image_base)
+            && let Ok(rva) = u32::try_from(rva)
+        {
+            targets.insert(rva);
+        }
+    }
+    targets
+}
+
+fn rva_is_executable(pe: &goblin::pe::PE<'_>, rva: u32) -> bool {
+    pe.sections.iter().any(|section| {
+        let extent = section.virtual_size.max(section.size_of_raw_data);
+        rva >= section.virtual_address
+            && rva < section.virtual_address.saturating_add(extent)
+            && section.characteristics & goblin::pe::section_table::IMAGE_SCN_MEM_EXECUTE != 0
+    })
 }
 
 struct Enrichment {
@@ -377,4 +571,19 @@ fn rva_to_offset(pe: &goblin::pe::PE, vaddr: u64) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::direct_call_target_rvas;
+
+    #[test]
+    fn discovers_relative_calls_but_not_indirect_calls() {
+        let image_base = 0x1_8000_0000;
+        let start = image_base + 0x1000;
+        // call 0x180001010; call rax; ret
+        let bytes = [0xE8, 0x0B, 0x00, 0x00, 0x00, 0xFF, 0xD0, 0xC3];
+        let targets = direct_call_target_rvas(&bytes, 64, start, image_base);
+        assert_eq!(targets.into_iter().collect::<Vec<_>>(), vec![0x1010]);
+    }
 }

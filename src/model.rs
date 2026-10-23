@@ -8,6 +8,11 @@ use std::collections::BTreeSet;
 #[serde(rename_all = "kebab-case")]
 pub enum Provenance {
     PeExport,
+    PeUnwind,
+    PeUnwindHandler,
+    PeGuardCf,
+    PeCallTarget,
+    PeTailTarget,
     Pdb,
     Demangler,
     R2Infer,

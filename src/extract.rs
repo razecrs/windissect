@@ -45,7 +45,12 @@ pub fn from_pe(dll: &Path, pdb: Option<&Path>, retain_pdb_records: bool) -> Resu
     let bytes = std::fs::read(dll).with_context(|| format!("read {}", dll.display()))?;
     let pe = PE::parse(&bytes).context("parse PE")?;
     let base = pe.image_base as u64;
-    let (symbols, export_rvas) = extract_exports(&pe, base);
+    let (mut symbols, export_rvas) = extract_exports(&pe, base);
+    if pdb.is_none() {
+        symbols = merge_unwind_symbols(symbols, extract_unwind_functions(&pe, base));
+        symbols = merge_new_rvas(symbols, extract_unwind_handlers(&pe, base));
+        symbols = merge_new_rvas(symbols, extract_guard_cf_functions(&pe, &bytes, base));
+    }
     let (pdb_symbols, pdb_coverage, pdb_records) =
         merge_pdb(&pe, pdb, base, &export_rvas, retain_pdb_records)?;
     let symbols = merge_exact_symbols(symbols, pdb_symbols);
@@ -55,6 +60,239 @@ pub fn from_pe(dll: &Path, pdb: Option<&Path>, retain_pdb_records: bool) -> Resu
         info,
         pdb_coverage,
         pdb_records,
+    })
+}
+
+/// Recover exact x64 function extents from the PE exception directory.
+///
+/// These entries are linker-authored runtime metadata, not heuristic code
+/// guesses. They remain anonymous without symbols, but their begin/end RVAs
+/// are suitable seeds for disassembly, CFG construction, body hashing and
+/// later evidence-based naming. When an entry shares an RVA with an export,
+/// [`merge_unwind_symbols`] attaches the exact extent to that export.
+///
+/// Only primary entries start a function. An entry carrying chained unwind
+/// info is a continuation chunk of the primary it chains to, so it is never
+/// emitted on its own; when such a chunk begins exactly where its primary ends,
+/// the two are one contiguous body and the primary's extent covers both.
+fn extract_unwind_functions(pe: &PE<'_>, base: u64) -> Vec<Symbol> {
+    if pe.header.coff_header.machine != 0x8664 {
+        return Vec::new();
+    }
+    let Some(exception_data) = pe.exception_data.as_ref() else {
+        return Vec::new();
+    };
+
+    let mut primaries = BTreeMap::new();
+    let mut chunks = BTreeMap::new();
+    for function in exception_data.functions().flatten() {
+        let begin = function.begin_address;
+        let end = function.end_address;
+        if begin == 0 || end <= begin || !rva_is_executable(pe, begin) {
+            continue;
+        }
+        let root = unwind_chain_root(exception_data, &pe.sections, function);
+        if root == begin {
+            primaries.entry(begin).or_insert(end);
+        } else {
+            chunks.insert(begin, (end, root));
+        }
+    }
+
+    primaries
+        .into_iter()
+        .map(|(begin, mut end)| {
+            while let Some(&(chunk_end, root)) = chunks.get(&end) {
+                if root != begin {
+                    break;
+                }
+                end = chunk_end;
+            }
+            let name = format!("sub_{begin:08X}");
+            let mut symbol = blank(
+                name.clone(),
+                name,
+                base + u64::from(begin),
+                false,
+                Provenance::PeUnwind,
+            );
+            symbol.rva = begin;
+            symbol.size = end - begin;
+            symbol.procedure_size = Some(symbol.size);
+            symbol.is_code = true;
+            symbol.kind = Kind::CFunc;
+            symbol
+        })
+        .collect()
+}
+
+/// Deepest chain the unwinder is expected to follow; anything longer is
+/// treated as malformed rather than looped on.
+const MAX_UNWIND_CHAIN: usize = 32;
+
+/// Follow chained unwind records to the begin RVA of the primary entry that
+/// owns `function`. An entry whose unwind info is unreadable stands as its own
+/// primary, which keeps the pre-chain behaviour for damaged metadata.
+fn unwind_chain_root(
+    exception_data: &goblin::pe::exception::ExceptionData<'_>,
+    sections: &[goblin::pe::section_table::SectionTable],
+    function: goblin::pe::exception::RuntimeFunction,
+) -> u32 {
+    let mut current = function;
+    for _ in 0..MAX_UNWIND_CHAIN {
+        match exception_data
+            .get_unwind_info(current, sections)
+            .ok()
+            .and_then(|info| info.chained_info)
+        {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    current.begin_address
+}
+
+fn merge_unwind_symbols(mut symbols: Vec<Symbol>, unwind_symbols: Vec<Symbol>) -> Vec<Symbol> {
+    for unwind in unwind_symbols {
+        if let Some(existing) = symbols
+            .iter_mut()
+            .find(|symbol| symbol.rva == unwind.rva && symbol.is_code)
+        {
+            existing.size = unwind.size;
+            existing.procedure_size = unwind.procedure_size;
+        } else {
+            symbols.push(unwind);
+        }
+    }
+    symbols
+}
+
+fn merge_new_rvas(mut symbols: Vec<Symbol>, new_symbols: Vec<Symbol>) -> Vec<Symbol> {
+    let mut known = symbols
+        .iter()
+        .map(|symbol| symbol.rva)
+        .collect::<BTreeSet<_>>();
+    for symbol in new_symbols {
+        if known.insert(symbol.rva) {
+            symbols.push(symbol);
+        }
+    }
+    symbols
+}
+
+/// Recover the language-specific handler entry points referenced by x64 unwind
+/// metadata. These are callable runtime entry points, not scope-table labels.
+fn extract_unwind_handlers(pe: &PE<'_>, base: u64) -> Vec<Symbol> {
+    use goblin::pe::exception::UnwindHandler;
+
+    if pe.header.coff_header.machine != 0x8664 {
+        return Vec::new();
+    }
+    let Some(exception_data) = pe.exception_data.as_ref() else {
+        return Vec::new();
+    };
+    let mut handlers = BTreeSet::new();
+    for function in exception_data.functions().flatten() {
+        let Ok(info) = exception_data.get_unwind_info(function, &pe.sections) else {
+            continue;
+        };
+        let Some(
+            UnwindHandler::ExceptionHandler(rva, _) | UnwindHandler::TerminationHandler(rva, _),
+        ) = info.handler
+        else {
+            continue;
+        };
+        if rva != 0 && rva_is_executable(pe, rva) {
+            handlers.insert(rva);
+        }
+    }
+    handlers
+        .into_iter()
+        .map(|rva| {
+            let name = format!("sub_{rva:08X}");
+            let mut symbol = blank(
+                name.clone(),
+                name,
+                base + u64::from(rva),
+                false,
+                Provenance::PeUnwindHandler,
+            );
+            symbol.rva = rva;
+            symbol.is_code = true;
+            symbol.kind = Kind::CFunc;
+            symbol
+        })
+        .collect()
+}
+
+/// Recover linker-declared valid indirect-call targets from the PE load-config
+/// Guard CF table. The table proves an entry RVA, but supplies no function
+/// extent or source-level name.
+fn extract_guard_cf_functions(pe: &PE<'_>, bytes: &[u8], base: u64) -> Vec<Symbol> {
+    let Some(load_config) = pe.load_config_data.as_ref() else {
+        return Vec::new();
+    };
+    let directory = &load_config.directory;
+    let Some(table_vaddr) = directory
+        .guard_cf_function_table
+        .filter(|value| *value != 0)
+    else {
+        return Vec::new();
+    };
+    let Some(count) = directory
+        .guard_cf_function_count
+        .and_then(|value| usize::try_from(value).ok())
+    else {
+        return Vec::new();
+    };
+    let flags = directory.guard_flags.unwrap_or(0);
+    if flags & goblin::pe::load_config::IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT == 0 {
+        return Vec::new();
+    }
+    let stride = 4 + usize::try_from((flags >> 28) & 0xF).unwrap_or(0);
+    let Some(table_offset) = vaddr_to_file_offset(pe, table_vaddr) else {
+        return Vec::new();
+    };
+
+    guard_cf_rvas(bytes, table_offset, count, stride)
+        .into_iter()
+        .filter(|rva| *rva != 0 && rva_is_executable(pe, *rva))
+        .map(|rva| {
+            let name = format!("sub_{rva:08X}");
+            let mut symbol = blank(
+                name.clone(),
+                name,
+                base + u64::from(rva),
+                false,
+                Provenance::PeGuardCf,
+            );
+            symbol.rva = rva;
+            symbol.is_code = true;
+            symbol.kind = Kind::CFunc;
+            symbol
+        })
+        .collect()
+}
+
+fn guard_cf_rvas(bytes: &[u8], offset: usize, count: usize, stride: usize) -> BTreeSet<u32> {
+    if stride < 4 {
+        return BTreeSet::new();
+    }
+    (0..count)
+        .filter_map(|index| offset.checked_add(index.checked_mul(stride)?))
+        .filter_map(|start| bytes.get(start..start.checked_add(4)?))
+        .map(|entry| u32::from_le_bytes([entry[0], entry[1], entry[2], entry[3]]))
+        .collect()
+}
+
+fn vaddr_to_file_offset(pe: &PE<'_>, vaddr: u64) -> Option<usize> {
+    let rva = u32::try_from(vaddr.checked_sub(pe.image_base)?).ok()?;
+    pe.sections.iter().find_map(|section| {
+        let delta = rva.checked_sub(section.virtual_address)?;
+        if delta >= section.size_of_raw_data {
+            return None;
+        }
+        usize::try_from(section.pointer_to_raw_data.checked_add(delta)?).ok()
     })
 }
 
@@ -298,7 +536,7 @@ fn codeview_guid(g: &[u8; 16]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{blank, merge_exact_symbols};
+    use super::{blank, guard_cf_rvas, merge_exact_symbols};
     use crate::model::Provenance;
 
     #[test]
@@ -328,5 +566,14 @@ mod tests {
         assert!(merged[0].exported);
         assert_eq!(merged[0].ordinal, Some(7));
         assert!(!merged[0].is_code);
+    }
+
+    #[test]
+    fn guard_cf_table_honors_metadata_stride() {
+        let bytes = [
+            0x10, 0x20, 0x00, 0x00, 0xAA, 0xBB, 0x30, 0x40, 0x00, 0x00, 0xCC, 0xDD,
+        ];
+        let rvas = guard_cf_rvas(&bytes, 0, 2, 6);
+        assert_eq!(rvas.into_iter().collect::<Vec<_>>(), vec![0x2010, 0x4030]);
     }
 }
