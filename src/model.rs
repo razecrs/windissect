@@ -262,6 +262,9 @@ pub struct BinaryInfo {
     pub image_base: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_size: Option<u64>,
+    /// PE optional-header entry point RVA, when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_point_rva: Option<u32>,
     /// Modules this binary imports from, as named in its import directory.
     ///
     /// Module-level dependencies, not the per-symbol `imports` on a Symbol.
@@ -510,6 +513,30 @@ pub struct InstructionRecord {
     pub branch_target_rva: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_target_rva: Option<u32>,
+    /// Bounded bytes for a resolved non-code memory target.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_reference: Option<StaticDataReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticDataReference {
+    pub rva: u32,
+    pub virtual_address: u64,
+    pub section: String,
+    pub file_offset: u64,
+    /// Exact byte count only when a supported code pattern proves a bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_evidence_rva: Option<u32>,
+    /// Uppercase, space-separated bytes. When size is unresolved this is a
+    /// conservative section-bounded preview, not a fabricated object extent.
+    pub bytes: String,
+    pub preview_size: u32,
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -820,28 +847,6 @@ impl Database {
                 && self.claim_is_proven(claim)
         });
         callable && signature
-    }
-
-    pub fn vtable_slot_is_verified(
-        &self,
-        owner: &str,
-        table_rva: u32,
-        table_object_offset: Option<i64>,
-        slot: u32,
-        target_rva: u32,
-    ) -> bool {
-        self.claims.iter().any(|claim| {
-            matches!(
-                claim.subject,
-                ClaimSubject::VtableSlot {
-                    table_rva: table,
-                    table_object_offset: claim_offset,
-                    slot: index,
-                    target_rva: target,
-                    owner: ref claim_owner,
-                } if claim_owner == owner && table == table_rva && claim_offset == table_object_offset && index == slot && target == target_rva
-            ) && self.claim_is_proven(claim)
-        })
     }
 
     /// Upgrade a deserialized legacy database without fabricating proof records.

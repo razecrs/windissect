@@ -159,8 +159,9 @@ fn verified_cpp(
 ) -> String {
     let mut out = preamble(db, false);
     out.push_str("namespace windissect::semantic::verified {\n\n");
-    for item in enums {
-        let name = sanitize(&item.qualified_name);
+    let mut used_names = BTreeSet::new();
+    for (index, item) in enums.iter().enumerate() {
+        let name = unique_sanitized(&item.qualified_name, index, &mut used_names);
         let underlying = cpp_integer_type(item.underlying_type.as_deref().unwrap_or("i64"));
         let _ = writeln!(out, "enum class {name} : {underlying} {{");
         let mut seen = BTreeSet::new();
@@ -177,8 +178,9 @@ fn verified_cpp(
         }
         out.push_str("};\n\n");
     }
-    for class in classes {
-        emit_layout(&mut out, class);
+    for (index, class) in classes.iter().enumerate() {
+        let name = unique_sanitized(&class.qualified_name, index, &mut used_names);
+        emit_layout(&mut out, class, &name);
     }
     out.push_str("} // namespace windissect::semantic::verified\n");
     out
@@ -266,8 +268,9 @@ fn candidate_cpp(
     let mut out = preamble(db, true);
     out.push_str("#ifndef WINDISSECT_ENABLE_CANDIDATE_SEMANTICS\n#error \"Candidate semantics are not ABI-safe; define WINDISSECT_ENABLE_CANDIDATE_SEMANTICS only for inspection\"\n#endif\n\n");
     out.push_str("namespace windissect::semantic::candidate {\n\n");
-    for item in enums {
-        let name = sanitize(&item.qualified_name);
+    let mut used_names = BTreeSet::new();
+    for (index, item) in enums.iter().enumerate() {
+        let name = unique_sanitized(&item.qualified_name, index, &mut used_names);
         let _ = writeln!(out, "struct {name}_enum_observations {{");
         for (index, value) in item.values.iter().enumerate() {
             let label = sanitize(&value.name);
@@ -279,8 +282,8 @@ fn candidate_cpp(
         }
         out.push_str("};\n\n");
     }
-    for class in classes {
-        let name = sanitize(&class.qualified_name);
+    for (index, class) in classes.iter().enumerate() {
+        let name = unique_sanitized(&class.qualified_name, index, &mut used_names);
         let _ = writeln!(out, "struct {name}_observations {{");
         if let Some(size) = class.size {
             let _ = writeln!(
@@ -311,20 +314,17 @@ fn candidate_cpp(
     out
 }
 
-fn emit_layout(out: &mut String, class: &SemanticClass) {
+fn emit_layout(out: &mut String, class: &SemanticClass, name: &str) {
     let Some(size) = class.size else { return };
     if size == 0 {
         return;
     }
-    let name = sanitize(&class.qualified_name);
     if class.kind == "union" {
         let _ = writeln!(out, "union {name}_layout {{");
         let mut max_width = 0u64;
         let mut written = false;
         for (index, field) in class.fields.iter().enumerate() {
-            if field.status != SemanticStatus::Verified
-                || field.width == 0
-                || field.structural_only
+            if field.status != SemanticStatus::Verified || field.width == 0 || field.structural_only
             {
                 continue;
             }
@@ -345,7 +345,7 @@ fn emit_layout(out: &mut String, class: &SemanticClass) {
         }
         out.push_str("};\n");
         let _ = writeln!(out, "static_assert(sizeof({name}_layout) == 0x{size:X});");
-        emit_metadata(out, class, &name);
+        emit_metadata(out, class, name);
         return;
     }
     let _ = writeln!(out, "struct {name}_layout {{");
@@ -388,7 +388,7 @@ fn emit_layout(out: &mut String, class: &SemanticClass) {
             "static_assert(offsetof({name}_layout, {label}) == 0x{offset:X});"
         );
     }
-    emit_metadata(out, class, &name);
+    emit_metadata(out, class, name);
 }
 
 fn emit_metadata(out: &mut String, class: &SemanticClass, name: &str) {
@@ -472,8 +472,9 @@ fn emit_rust(
         "//! Verified Windissect semantic layouts for {}.\n#![allow(non_camel_case_types, non_snake_case, dead_code)]\n\n",
         db.binary.file
     );
-    for item in enums {
-        let name = sanitize(&item.qualified_name);
+    let mut used_names = BTreeSet::new();
+    for (index, item) in enums.iter().enumerate() {
+        let name = unique_sanitized(&item.qualified_name, index, &mut used_names);
         let underlying = item.underlying_type.as_deref().unwrap_or("i64");
         let _ = writeln!(
             lib,
@@ -486,18 +487,18 @@ fn emit_rust(
             if !seen.insert(value_label.clone()) {
                 continue;
             }
-            let label = format!(
-                "VALUE_{}_{}",
-                value_label.to_ascii_uppercase(),
-                index
+            let label = format!("VALUE_{}_{}", value_label.to_ascii_uppercase(), index);
+            let _ = writeln!(
+                lib,
+                "    pub const {label}: Self = Self({});",
+                project_enum_value(underlying, value.value)
             );
-            let _ = writeln!(lib, "    pub const {label}: Self = Self({});", project_enum_value(underlying, value.value));
         }
         lib.push_str("}\n\n");
     }
-    for class in classes {
+    for (index, class) in classes.iter().enumerate() {
         let Some(size) = class.size else { continue };
-        let name = sanitize(&class.qualified_name);
+        let name = unique_sanitized(&class.qualified_name, index, &mut used_names);
         if class.kind == "union" {
             let _ = writeln!(lib, "#[repr(C)]\npub union {name}_layout {{");
             let mut written = false;
@@ -726,6 +727,22 @@ fn sanitize(value: &str) -> String {
     result
 }
 
+fn unique_sanitized(value: &str, index: usize, used: &mut BTreeSet<String>) -> String {
+    let base = sanitize(value);
+    if used.insert(base.clone()) {
+        return base;
+    }
+
+    let mut ordinal = index;
+    loop {
+        let candidate = format!("{base}__windissect_{ordinal}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+        ordinal += 1;
+    }
+}
+
 pub fn target_stem(file: &str) -> String {
     sanitize(
         Path::new(file)
@@ -733,4 +750,20 @@ pub fn target_stem(file: &str) -> String {
             .and_then(|value| value.to_str())
             .unwrap_or("target"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitized_identifier_collisions_receive_stable_suffixes() {
+        let mut used = BTreeSet::new();
+        assert_eq!(unique_sanitized("a::b", 0, &mut used), "a__b");
+        assert_eq!(unique_sanitized("a--b", 1, &mut used), "a__b__windissect_1");
+        assert_eq!(
+            unique_sanitized("a__b__windissect_1", 2, &mut used),
+            "a__b__windissect_1__windissect_2"
+        );
+    }
 }

@@ -1,4 +1,9 @@
 /target
+/tools/*/target/
+*.tmp.json
+/tui/node_modules/
+/tui/dist/
+/.windissect/
 /.idea/
 /%TEMP%/
 /bin/

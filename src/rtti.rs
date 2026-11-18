@@ -104,9 +104,8 @@ fn recover_table(
     let symbol = &context.db.symbols[symbol_index];
     let demangled = symbol.demangled.as_deref();
     let table_class = demangled.and_then(vftable_class_name);
-    let mut allowed_classes = table_class
-        .map(|class| class_hierarchy(context.db, class))
-        .unwrap_or_default();
+    let mut allowed_classes =
+        table_class.map_or_default(|class| class_hierarchy(context.db, class));
     for alias in aliases
         .iter()
         .filter_map(|index| context.db.symbols.get(*index))

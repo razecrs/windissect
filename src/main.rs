@@ -1,6 +1,7 @@
 //! Windissect: target-independent Windows PE/PDB dissection pipeline.
 
 mod archive;
+mod decompile;
 mod demangle;
 mod descent;
 mod diff;
@@ -10,9 +11,11 @@ mod emit_asm;
 mod emit_evidence;
 mod emit_rust;
 mod emit_syms;
+mod emit_winrt;
 mod enrich;
 mod evidencepack;
 mod extract;
+mod file_access;
 mod hex;
 mod history;
 mod layoutinfer;
@@ -30,26 +33,59 @@ mod semantic_emit;
 mod semantic_probe;
 mod semantic_score;
 mod semantic_validate;
+mod strings;
 mod typeparse;
 mod verify;
 mod winmd;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use model::{Capability, CapabilityStatus, Database, Provenance, SCHEMA_VERSION};
 use std::collections::BTreeMap;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Parser)]
 #[command(about = "Dissect Windows PE binaries and matching PDBs into trustworthy IR and bindings")]
 struct Cli {
+    /// Relaunch the interactive TUI with administrator rights.
+    #[arg(long, global = true)]
+    elevate: bool,
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Convert machine code to candidate C-like pseudocode using an installed decompiler.
+    Decompile {
+        binary: PathBuf,
+        #[arg(short, long, default_value = "pseudocode.c")]
+        out: PathBuf,
+        /// Explicit IDA text-mode executable; otherwise auto-detected.
+        #[arg(long)]
+        ida: Option<PathBuf>,
+        /// Decompile only the function at this RVA (decimal or 0x-prefixed).
+        #[arg(long, value_parser = parse_rva)]
+        rva: Option<u32>,
+        /// Function selection: target code is the default; all includes compiler/runtime helpers.
+        #[arg(long, value_enum, default_value = "target")]
+        scope: decompile::DecompileScope,
+    },
+    /// Produce a complete browsable analysis workspace in one command.
+    Analyze {
+        /// PE binary to analyze.
+        binary: PathBuf,
+        /// Optional matching PDB.
+        #[arg(long)]
+        pdb: Option<PathBuf>,
+        /// Workspace output directory.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+    /// Search printable ASCII and UTF-16LE strings in a binary.
+    Strings(StringsArgs),
     /// Extract exports + PDB internals, demangle + structure, write the IR.
     Extract {
         dll: PathBuf,
@@ -61,6 +97,9 @@ enum Cmd {
         /// Exhaustively inventory PE/PDB observations before promotion.
         #[arg(long)]
         pgressive: bool,
+        /// Retain decoded instructions and CFG edges for interactive navigation.
+        #[arg(long)]
+        retain_instructions: bool,
     },
     /// Exhaustively collect PE/PDB observations and write a resumable inventory.
     Pgressive {
@@ -155,6 +194,20 @@ enum Cmd {
         #[arg(long)]
         base: Option<u64>,
     },
+    /// Emit a C header of `WinRT` IIDs and vtable slots from winmd IR.
+    EmitWinrt {
+        #[arg(short, long, default_value = "winrt")]
+        out: PathBuf,
+        /// IR databases written by `windissect winmd`.
+        #[arg(long, required = true)]
+        ir: Vec<PathBuf>,
+        /// Qualified interface names to emit, e.g. Windows.UI.Xaml.IUIElement.
+        #[arg(long, required = true)]
+        want: Vec<String>,
+        /// Header stem: writes <name>_winrt.h.
+        #[arg(long, default_value = "winrt")]
+        name: String,
+    },
     /// Emit strict verified claims separately from evidence-only candidates.
     EmitEvidence {
         #[arg(short, long, default_value = "evidence")]
@@ -216,37 +269,7 @@ enum Cmd {
         out: PathBuf,
     },
     /// Compare generated declarations with a reference corpus without trusting it as proof.
-    Refine {
-        #[arg(short, long, default_value = "ir/symbols.json")]
-        ir: PathBuf,
-        /// Directory containing reference .h/.hpp files.
-        #[arg(long)]
-        reference: Option<PathBuf>,
-        /// Build a proof-gated semantic class/interface/enum projection.
-        #[arg(long)]
-        semantic: bool,
-        /// Exact PE input required by --semantic.
-        #[arg(long)]
-        binary: Option<PathBuf>,
-        /// Matching PDB for future semantic passes; identity remains anchored by the IR.
-        #[arg(long)]
-        pdb: Option<PathBuf>,
-        /// Separate verified/candidate semantic output root.
-        #[arg(long, default_value = "semantic")]
-        semantic_out: PathBuf,
-        /// Explicit exact-build proof-gated runtime probe manifest. Windissect
-        /// never executes discovered functions automatically.
-        #[arg(long)]
-        probe_manifest: Option<PathBuf>,
-        /// Optional exact-build manual layout evidence corpus.
-        #[arg(long)]
-        manual_layout: Option<PathBuf>,
-        #[arg(short, long, default_value = "refinement/report.json")]
-        out: PathBuf,
-        /// Optional refined IR containing generic rule recoveries.
-        #[arg(long)]
-        out_ir: Option<PathBuf>,
-    },
+    Refine(RefineArgs),
     /// Score verified semantic facts against an exact-build owned oracle.
     ScoreSemantic {
         #[arg(short, long)]
@@ -269,18 +292,106 @@ enum Cmd {
     },
 }
 
+#[derive(Args)]
+struct StringsArgs {
+    /// Binary file to scan.
+    binary: PathBuf,
+    /// Optional substring filter.
+    query: Option<String>,
+    /// Minimum number of characters in a result.
+    #[arg(short = 'n', long, default_value_t = 4)]
+    min_length: usize,
+    /// Encoding to scan.
+    #[arg(short, long, value_enum, default_value_t = strings::StringEncoding::All)]
+    encoding: strings::StringEncoding,
+    /// Match the query with exact case.
+    #[arg(long)]
+    case_sensitive: bool,
+    /// Emit JSON records.
+    #[arg(long)]
+    json: bool,
+    /// Maximum results; zero means unlimited.
+    #[arg(short, long, default_value_t = 200)]
+    limit: usize,
+}
+
+#[derive(Args)]
+struct RefineArgs {
+    #[arg(short, long, default_value = "ir/symbols.json")]
+    ir: PathBuf,
+    /// Directory containing reference .h/.hpp files.
+    #[arg(long)]
+    reference: Option<PathBuf>,
+    /// Build a proof-gated semantic class/interface/enum projection.
+    #[arg(long = "semantic")]
+    semantic_mode: bool,
+    /// Exact PE input required by --semantic.
+    #[arg(long)]
+    binary: Option<PathBuf>,
+    /// Matching PDB for future semantic passes; identity remains anchored by the IR.
+    #[arg(long)]
+    pdb: Option<PathBuf>,
+    /// Separate verified/candidate semantic output root.
+    #[arg(long, default_value = "semantic")]
+    semantic_out: PathBuf,
+    /// Explicit exact-build proof-gated runtime probe manifest. Windissect
+    /// never executes discovered functions automatically.
+    #[arg(long)]
+    probe_manifest: Option<PathBuf>,
+    /// Optional exact-build manual layout evidence corpus.
+    #[arg(long)]
+    manual_layout: Option<PathBuf>,
+    #[arg(short, long, default_value = "refinement/report.json")]
+    out: PathBuf,
+    /// Optional refined IR containing generic rule recoveries.
+    #[arg(long)]
+    out_ir: Option<PathBuf>,
+}
+
 fn main() -> Result<()> {
-    match Cli::parse().cmd {
+    let cli = Cli::parse();
+    let Some(command) = cli.cmd else {
+        #[cfg(windows)]
+        if cli.elevate && !is_elevated() {
+            return request_elevated_tui();
+        }
+        return launch_tui();
+    };
+    dispatch(command)
+}
+
+fn dispatch(command: Cmd) -> Result<()> {
+    match command {
+        Cmd::Decompile {
+            binary,
+            out,
+            ida,
+            rva,
+            scope,
+        } => decompile::command(&binary, &out, ida.as_deref(), rva, scope),
+        Cmd::Analyze { binary, pdb, out } => {
+            analyze_command(&binary, pdb.as_deref(), out.as_deref())
+        }
+        Cmd::Strings(args) => strings::search_command(
+            &args.binary,
+            args.query.as_deref(),
+            args.min_length,
+            args.encoding,
+            args.case_sensitive,
+            args.json,
+            args.limit,
+        ),
         Cmd::Extract {
             dll,
             out,
             pdb,
             pgressive,
+            retain_instructions,
         } => {
             if pgressive {
                 pgressive::run(&dll, pdb.as_deref(), &out, None)
             } else {
-                extract_to(&dll, &out, pdb.as_deref(), false)
+                extract_to(&dll, &out, pdb.as_deref(), retain_instructions)
             }
         }
         Cmd::Pgressive { dll, pdb, out, ir } => {
@@ -295,14 +406,27 @@ fn main() -> Result<()> {
             name,
             base,
         } => emit_syms_command(&ir, &out, name, base),
+        Cmd::EmitWinrt {
+            out,
+            ir,
+            want,
+            name,
+        } => emit_winrt_command(&ir, &want, &name, &out),
         Cmd::EmitEvidence { out, ir } => emit_evidence_command(&ir, &out),
         Cmd::EmitAsm { out, ir } => emit_asm_command(&ir, &out),
         Cmd::Winmd { winmd: path, out } => winmd::winmd_command(&path, &out),
         Cmd::Deps { ir, out, recursive } => archive::deps_command(&ir, out.as_deref(), recursive),
-        Cmd::Symbols { files, server, json } => archive::symbols_command(&files, &server, json),
-        Cmd::Manifest { paths, area, recursive, out } => {
-            archive::manifest_command(&paths, &area, recursive, out.as_deref())
-        }
+        Cmd::Symbols {
+            files,
+            server,
+            json,
+        } => archive::symbols_command(&files, &server, json),
+        Cmd::Manifest {
+            paths,
+            area,
+            recursive,
+            out,
+        } => archive::manifest_command(&paths, &area, recursive, out.as_deref()),
         Cmd::Catalog { history, out } => archive::catalog_command(&history, out.as_deref()),
         Cmd::Classes { ir } => list_classes(&ir),
         Cmd::Verify { ir, profile } => verify_command(&ir, profile.as_deref()),
@@ -320,29 +444,7 @@ fn main() -> Result<()> {
             oracle: input,
             out,
         } => import_oracle_command(&ir, &input, &out),
-        Cmd::Refine {
-            ir,
-            reference,
-            semantic: semantic_mode,
-            binary,
-            pdb,
-            semantic_out,
-            probe_manifest,
-            manual_layout,
-            out,
-            out_ir,
-        } => refine_command(RefineOptions {
-            ir,
-            reference,
-            semantic_mode,
-            binary,
-            pdb,
-            semantic_out,
-            probe_manifest,
-            manual_layout,
-            out,
-            out_ir,
-        }),
+        Cmd::Refine(args) => refine_command(&args),
         Cmd::SemanticProbeHelper {
             binary,
             manifest,
@@ -355,6 +457,144 @@ fn main() -> Result<()> {
             out,
         } => score_semantic_command(&ir, &oracle, precision_threshold, out.as_deref()),
     }
+}
+
+fn analyze_command(binary: &Path, pdb: Option<&Path>, out: Option<&Path>) -> Result<()> {
+    let stem = binary
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("binary");
+    let default_root = PathBuf::from("windissect-work").join(stem);
+    let requested_root = out.unwrap_or(&default_root);
+    let root = if requested_root.is_absolute() {
+        requested_root.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(requested_root)
+    };
+    std::fs::create_dir_all(&root)?;
+
+    let ir = root.join("ir.json");
+    extract_to(binary, &ir, pdb, true)?;
+    strings::write_inventory(binary, &root.join("strings.json"))?;
+    emit_asm_command(&ir, &root.join("disassembly.asm"))?;
+    emit_headers_command(&ir, &root.join("headers"))?;
+    emit_rust_command(&ir, &root.join("rust"))?;
+    emit_evidence_command(&ir, &root.join("evidence"))?;
+    doc_command(&ir, &root.join("docs"))?;
+    let pseudocode = root.join("pseudocode.c");
+    if decompile::find_ida().is_some() {
+        decompile::command(
+            binary,
+            &pseudocode,
+            None,
+            None,
+            decompile::DecompileScope::Target,
+        )?;
+    } else {
+        println!("candidate pseudocode: skipped (IDA/Hex-Rays not detected)");
+    }
+    anyhow::ensure!(
+        verify::run_profile(&load_ir(&ir)?, None),
+        "generated IR failed verification"
+    );
+
+    println!("workspace ready: {}", root.display());
+    println!("  IR:          {}", ir.display());
+    println!("  strings:     {}", root.join("strings.json").display());
+    println!("  assembly:    {}", root.join("disassembly.asm").display());
+    println!("  C/C++:       {}", root.join("headers").display());
+    println!("  Rust:        {}", root.join("rust").display());
+    println!("  evidence:    {}", root.join("evidence").display());
+    println!("  docs:        {}", root.join("docs").display());
+    if pseudocode.exists() {
+        println!("  pseudocode:  {} (candidate)", pseudocode.display());
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn is_elevated() -> bool {
+    unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() != 0 }
+}
+
+#[cfg(windows)]
+fn request_elevated_tui() -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let executable = std::env::current_exe()?;
+    let directory = std::env::current_dir()?;
+    let wide = |value: &std::ffi::OsStr| {
+        value
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>()
+    };
+    let operation = wide(std::ffi::OsStr::new("runas"));
+    let executable = wide(executable.as_os_str());
+    let directory = wide(directory.as_os_str());
+    println!("requesting administrator access for the Windissect TUI…");
+    let result = unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            executable.as_ptr(),
+            std::ptr::null(),
+            directory.as_ptr(),
+            SW_SHOWNORMAL,
+        )
+    };
+    anyhow::ensure!(
+        result as usize > 32,
+        "administrator elevation was cancelled or failed (ShellExecute code {})",
+        result as usize
+    );
+    Ok(())
+}
+
+fn parse_rva(value: &str) -> std::result::Result<u32, String> {
+    let value = value.trim();
+    let parsed = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .map_or_else(|| value.parse::<u32>(), |hex| u32::from_str_radix(hex, 16));
+    parsed.map_err(|error| format!("invalid RVA {value:?}: {error}"))
+}
+
+fn launch_tui() -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let current_exe = std::env::current_exe()?;
+    let current_dir = std::env::current_dir()?;
+    let repo_from_target = current_exe
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent);
+    let roots = [Some(current_dir.as_path()), repo_from_target]
+        .into_iter()
+        .flatten();
+
+    for root in roots {
+        let built = root.join("tui").join("dist").join("index.js");
+        if built.exists() {
+            let status = Command::new("node")
+                .arg(&built)
+                .arg("--bin")
+                .arg(&current_exe)
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?;
+            anyhow::ensure!(status.success(), "Windissect TUI exited with {status}");
+            return Ok(());
+        }
+    }
+
+    anyhow::bail!(
+        "TUI is not built; run `cd tui`, `npm install`, and `npm run build`, then launch windissect again"
+    )
 }
 
 fn emit_headers_command(ir: &Path, out: &Path) -> Result<()> {
@@ -378,6 +618,14 @@ fn emit_syms_command(ir: &Path, out: &Path, name: Option<String>, base: Option<u
         )
     });
     emit_syms::emit_syms(&db, &stem, out, base.or(db.binary.image_base).unwrap_or(0))
+}
+
+fn emit_winrt_command(ir: &[PathBuf], want: &[String], name: &str, out: &Path) -> Result<()> {
+    let dbs = ir
+        .iter()
+        .map(|path| load_ir(path))
+        .collect::<Result<Vec<_>>>()?;
+    emit_winrt::emit_winrt(&dbs, want, name, out)
 }
 
 fn emit_evidence_command(ir: &Path, out: &Path) -> Result<()> {
@@ -436,8 +684,7 @@ fn record_build_command(ir: &Path, root: &Path) -> Result<()> {
     let previous = result
         .previous
         .as_ref()
-        .map(|value| format!(" (changes from {value})"))
-        .unwrap_or_default();
+        .map_or_default(|value| format!(" (changes from {value})"));
     println!(
         "recorded {} build {}{} in {}",
         result.target,
@@ -468,20 +715,7 @@ fn import_oracle_command(ir: &Path, input: &Path, out: &Path) -> Result<()> {
     Ok(())
 }
 
-struct RefineOptions {
-    ir: PathBuf,
-    reference: Option<PathBuf>,
-    semantic_mode: bool,
-    binary: Option<PathBuf>,
-    pdb: Option<PathBuf>,
-    semantic_out: PathBuf,
-    probe_manifest: Option<PathBuf>,
-    manual_layout: Option<PathBuf>,
-    out: PathBuf,
-    out_ir: Option<PathBuf>,
-}
-
-fn refine_command(options: RefineOptions) -> Result<()> {
+fn refine_command(options: &RefineArgs) -> Result<()> {
     let mut db = load_ir(&options.ir)?;
     let recovered = refine::apply_generic_rules(&mut db);
     if let Some(reference) = options.reference.as_deref() {
@@ -491,18 +725,18 @@ fn refine_command(options: RefineOptions) -> Result<()> {
         );
     }
     if options.semantic_mode {
-        run_semantic_refinement(&mut db, &options)?;
+        run_semantic_refinement(&mut db, options)?;
     }
     let report = refine::compare(&db, options.reference.as_deref(), recovered)?;
     refine::write(&report, &options.out)?;
-    if let Some(path) = options.out_ir {
-        diff::atomic_write(&path, &serde_json::to_vec_pretty(&db)?)?;
+    if let Some(path) = options.out_ir.as_ref() {
+        diff::atomic_write(path, &serde_json::to_vec_pretty(&db)?)?;
     }
     print_refine_summary(&report, &options.out);
     Ok(())
 }
 
-fn run_semantic_refinement(db: &mut Database, options: &RefineOptions) -> Result<()> {
+fn run_semantic_refinement(db: &mut Database, options: &RefineArgs) -> Result<()> {
     let binary = options
         .binary
         .as_deref()
@@ -556,7 +790,7 @@ fn run_semantic_refinement(db: &mut Database, options: &RefineOptions) -> Result
     Ok(())
 }
 
-fn run_semantic_probe(db: &mut Database, binary: &Path, options: &RefineOptions) -> Result<()> {
+fn run_semantic_probe(db: &mut Database, binary: &Path, options: &RefineArgs) -> Result<()> {
     let probe_out = options.semantic_out.join("probe-result.json");
     if let Some(manifest_path) = &options.probe_manifest {
         let manifest = semantic_probe::load_and_validate(db, binary, manifest_path)?;
@@ -653,6 +887,7 @@ pub(crate) fn extract_to(
     pdb: Option<&Path>,
     retain_instruction_graph: bool,
 ) -> Result<()> {
+    file_access::ensure_readable(dll)?;
     let extraction_started = Instant::now();
     let mut phase_started = extraction_started;
     if let Some(path) = pdb {
@@ -757,13 +992,12 @@ pub(crate) fn extract_to(
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let serialized = serialize_ir(&db, retain_instruction_graph)?;
+    let serialized_bytes = write_ir_atomic(out, &db, retain_instruction_graph)?;
     eprintln!(
         "[timing] serialize-ir: {:.3}s ({} bytes)",
         phase_started.elapsed().as_secs_f64(),
-        serialized.len()
+        serialized_bytes
     );
-    std::fs::write(out, serialized)?;
     eprintln!(
         "[timing] total-extraction: {:.3}s",
         extraction_started.elapsed().as_secs_f64()
@@ -772,12 +1006,33 @@ pub(crate) fn extract_to(
     Ok(())
 }
 
-fn serialize_ir(db: &Database, pretty: bool) -> Result<Vec<u8>> {
-    Ok(if pretty {
-        serde_json::to_vec_pretty(db)?
-    } else {
-        serde_json::to_vec(db)?
-    })
+fn write_ir_atomic(path: &Path, db: &Database, pretty: bool) -> Result<u64> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let temporary = path.with_extension(format!(
+        "{}.tmp",
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("data")
+    ));
+
+    {
+        let file = std::fs::File::create(&temporary)?;
+        let mut writer = BufWriter::new(file);
+        if pretty {
+            serde_json::to_writer_pretty(&mut writer, db)?;
+        } else {
+            serde_json::to_writer(&mut writer, db)?;
+        }
+        writer.flush()?;
+    }
+
+    let length = std::fs::metadata(&temporary)?.len();
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    std::fs::rename(&temporary, path)?;
+    Ok(length)
 }
 
 fn configure_instruction_retention(db: &mut Database, retain: bool) {

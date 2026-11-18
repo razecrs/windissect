@@ -42,28 +42,26 @@ pub fn run(root: &Path, stem: &str) -> Result<Vec<CompilerCheck>> {
     fs::write(
         &verified_tu,
         format!(
-            "#include \"{}\"\n#include \"{}\"\nint main() {{ return 0; }}\n",
-            verified_header.display().to_string().replace('\\', "/"),
-            facts_header.display().to_string().replace('\\', "/")
+            "#include \"../verified/include/{stem}_semantic.hpp\"\n#include \"../verified/include/{stem}_semantic_facts.hpp\"\nint main() {{ return 0; }}\n"
         ),
     )?;
     fs::write(
         &candidate_tu,
         format!(
-            "#define WINDISSECT_ENABLE_CANDIDATE_SEMANTICS 1\n#include \"{}\"\nint main() {{ return 0; }}\n",
-            candidate_header.display().to_string().replace('\\', "/")
+            "#define WINDISSECT_ENABLE_CANDIDATE_SEMANTICS 1\n#include \"../candidates/include/{stem}_semantic_candidates.hpp\"\nint main() {{ return 0; }}\n"
         ),
     )?;
 
+    let cpp_compiler = select_cpp_compiler(&directory)?;
     let checks = vec![
         run_tool(
-            "clang++",
+            &cpp_compiler,
             "verified-cpp",
             &["-std=c++20", "-fsyntax-only"],
             &verified_tu,
         ),
         run_tool(
-            "clang++",
+            &cpp_compiler,
             "candidate-cpp",
             &["-std=c++20", "-fsyntax-only"],
             &candidate_tu,
@@ -75,6 +73,45 @@ pub fn run(root: &Path, stem: &str) -> Result<Vec<CompilerCheck>> {
         &serde_json::to_vec_pretty(&checks)?,
     )?;
     Ok(checks)
+}
+
+fn select_cpp_compiler(directory: &Path) -> Result<String> {
+    let probe = directory.join("compiler-probe.cpp");
+    fs::write(&probe, "#include <cstddef>\nint main() { return 0; }\n")?;
+
+    let mut candidates = Vec::new();
+    if let Ok(configured) = std::env::var("CXX")
+        && !configured.trim().is_empty()
+    {
+        candidates.push(configured);
+    }
+    candidates.extend(["g++".to_owned(), "clang++".to_owned()]);
+    candidates.dedup();
+
+    let mut failures = Vec::new();
+    for compiler in candidates {
+        match Command::new(&compiler)
+            .args(["-std=c++20", "-fsyntax-only"])
+            .arg(&probe)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let _ = fs::remove_file(&probe);
+                return Ok(compiler);
+            }
+            Ok(output) => failures.push(format!(
+                "{compiler}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) => failures.push(format!("{compiler}: {error}")),
+        }
+    }
+
+    let _ = fs::remove_file(&probe);
+    anyhow::bail!(
+        "no usable C++20 compiler found; set CXX to a working compiler:\n{}",
+        failures.join("\n")
+    )
 }
 
 fn run_tool(tool: &str, surface: &str, args: &[&str], input: &Path) -> CompilerCheck {
@@ -108,7 +145,10 @@ fn run_tool(tool: &str, surface: &str, args: &[&str], input: &Path) -> CompilerC
 }
 
 fn run_cargo(root: &Path) -> CompilerCheck {
-    let scratch = std::env::temp_dir().join(format!("windissect-semantic-{}", std::process::id()));
+    // Keep generated crates and rustc metadata on the corpus volume. Large
+    // Windows UI surfaces can exhaust a small system TEMP drive even when the
+    // selected output root has hundreds of gigabytes free.
+    let scratch = root.join("layout-check/cargo-scratch");
     let _ = fs::remove_dir_all(&scratch);
     let manifest = scratch.join("Cargo.toml");
     let source_manifest = root.join("verified/rust/Cargo.toml");

@@ -147,10 +147,11 @@ fn check_identity(db: &Database, r: &mut Report) {
         db.schema == crate::model::SCHEMA_VERSION,
         "",
     );
+    let anchor = binary_identity_anchor(db);
     r.check(
-        "binary version-anchored (pdb guid)",
-        db.binary.pdb_guid.is_some(),
-        "",
+        "binary version-anchored",
+        anchor.is_some(),
+        anchor.unwrap_or("missing PDB GUID and valid SHA-256"),
     );
     let type_status = db
         .type_recovery
@@ -161,6 +162,24 @@ fn check_identity(db: &Database, r: &mut Report) {
         type_status.is_some(),
         type_status.unwrap_or("missing diagnostics"),
     );
+}
+
+fn binary_identity_anchor(db: &Database) -> Option<&'static str> {
+    if db
+        .binary
+        .pdb_guid
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Some("PDB GUID");
+    }
+    db.binary
+        .sha256
+        .as_deref()
+        .is_some_and(|value| {
+            value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+        .then_some("binary SHA-256")
 }
 
 fn check_proof_graph(db: &Database, r: &mut Report) {
@@ -376,8 +395,10 @@ fn check_symbols(db: &Database, r: &mut Report) {
             .type_recovery
             .get("status")
             .and_then(serde_json::Value::as_str)
-            == Some("unavailable-no-pdb")
-        && db.binary.sha256.is_some();
+            .is_some_and(|status| {
+                status == "unavailable-no-pdb" || (status == "recovered" && !db.classes.is_empty())
+            })
+        && (db.binary.sha256.is_some() || db.binary.pdb_guid.is_some());
     r.check(
         "symbol inventory is accounted for",
         !db.symbols.is_empty() || empty_accounted_for,
@@ -405,7 +426,12 @@ fn check_symbols(db: &Database, r: &mut Report) {
     let bad_export = db
         .symbols
         .iter()
-        .filter(|s| s.exported && s.vaddr == 0)
+        .filter(|s| {
+            s.exported
+                && s.vaddr == 0
+                && s.forwarder.is_none()
+                && s.provenance != crate::model::Provenance::Reflection
+        })
         .count();
     r.check(
         "exported symbols have addresses",
@@ -512,5 +538,61 @@ fn check_dui70(db: &Database, r: &mut Report) {
             s.sig.storage.as_deref() == Some("static") && s.sig.params.len() == 3,
             "",
         );
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::{binary_identity_anchor, run_profile};
+    use crate::model::{
+        Confidence, Coverage, Database, Kind, Provenance, SCHEMA_VERSION, Signature, Symbol,
+    };
+
+    #[test]
+    fn pe_only_sha256_is_a_valid_build_anchor() {
+        let mut db = Database::default();
+        db.binary.sha256 = Some("a".repeat(64));
+        assert_eq!(binary_identity_anchor(&db), Some("binary SHA-256"));
+    }
+
+    #[test]
+    fn malformed_hash_is_not_a_build_anchor() {
+        let mut db = Database::default();
+        db.binary.sha256 = Some("not-a-sha256".into());
+        assert_eq!(binary_identity_anchor(&db), None);
+    }
+
+    #[test]
+    fn pe_export_without_address_still_fails_verification() {
+        let mut db = Database {
+            schema: SCHEMA_VERSION,
+            type_recovery: serde_json::json!({ "status": "unavailable-no-pdb" }),
+            ..Default::default()
+        };
+        db.binary.sha256 = Some("a".repeat(64));
+        db.symbols.push(Symbol {
+            id: "BrokenExport".into(),
+            mangled: "BrokenExport".into(),
+            demangled: None,
+            vaddr: 0,
+            rva: 0,
+            ordinal: Some(1),
+            size: 0,
+            procedure_size: None,
+            is_code: true,
+            forwarder: None,
+            body_hash: String::new(),
+            exported: true,
+            library: false,
+            kind: Kind::CFunc,
+            coverage: Coverage::Auto,
+            provenance: Provenance::PeExport,
+            confidence: Confidence::Certain,
+            sig: Signature::default(),
+            callers: vec![],
+            calls: vec![],
+            imports: vec![],
+        });
+        assert!(!run_profile(&db, None));
     }
 }

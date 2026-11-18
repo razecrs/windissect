@@ -46,6 +46,39 @@ pub fn emit(db: &Database, out: &Path) -> Result<()> {
                 write!(text, "  ; data -> RVA 0x{target:08X}")?;
             }
             writeln!(text)?;
+            if let Some(data) = &instruction.data_reference {
+                writeln!(
+                    text,
+                    "    ;   Data reference: 0x{:X} (RVA 0x{:08X})",
+                    data.virtual_address, data.rva
+                )?;
+                writeln!(
+                    text,
+                    "    ;   Section: {} | file offset 0x{:X}",
+                    data.section, data.file_offset
+                )?;
+                if let Some(size) = data.inferred_size {
+                    writeln!(
+                        text,
+                        "    ;   Size: {} bytes ({}; evidence RVA 0x{:08X})",
+                        size,
+                        data.size_source.as_deref().unwrap_or("code-inferred bound"),
+                        data.size_evidence_rva.unwrap_or(0)
+                    )?;
+                } else {
+                    writeln!(
+                        text,
+                        "    ;   Preview: {} bytes (object size unresolved; section-bounded)",
+                        data.preview_size
+                    )?;
+                }
+                writeln!(
+                    text,
+                    "    ;   Bytes: {}{}",
+                    data.bytes,
+                    if data.truncated { " …" } else { "" }
+                )?;
+            }
         }
         if !function.cfg_edges.is_empty() {
             writeln!(text, "    ; CFG edges:")?;

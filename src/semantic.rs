@@ -15,6 +15,7 @@ type FieldKey = (u64, u32, Option<u8>, Option<u8>, Option<String>, bool);
 type FieldObservation = (Option<String>, String, bool);
 type BaseKey = (String, Option<i64>, bool);
 type BaseObservation = (String, bool);
+type VtableSlotKey = (String, u32, Option<i64>, u32, u32);
 
 pub fn validate_target(db: &mut Database, path: &Path) -> anyhow::Result<Vec<u8>> {
     let bytes = std::fs::read(path)?;
@@ -51,6 +52,14 @@ struct ClassBuilder {
 
 pub fn project(db: &mut Database) {
     let mut classes = BTreeMap::<String, ClassBuilder>::new();
+    // Proof validation walks the complete evidence/proof/conflict sets. Build
+    // that index once: doing it for every claim and then again for every
+    // vtable slot made large WinUI PDBs accidentally quadratic.
+    let proven_claim_ids: BTreeSet<String> = db
+        .proven_claim_ids()
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     let type_names = type_index_names(&db.types);
     let type_kinds: BTreeMap<String, String> = db
         .types
@@ -63,8 +72,8 @@ pub fn project(db: &mut Database) {
         })
         .collect();
 
-    collect_claims(db, &type_names, &mut classes);
-    collect_vtables(db, &mut classes);
+    collect_claims(db, &type_names, &proven_claim_ids, &mut classes);
+    collect_vtables(db, &proven_claim_ids, &mut classes);
     let mut diagnostics = Vec::new();
     let projected = classes
         .into_iter()
@@ -72,7 +81,7 @@ pub fn project(db: &mut Database) {
         .collect();
     db.semantic = SemanticModel {
         classes: projected,
-        enums: project_enums(db),
+        enums: project_enums(db, &proven_claim_ids),
         aliases: vec![],
         diagnostics,
     };
@@ -81,10 +90,11 @@ pub fn project(db: &mut Database) {
 fn collect_claims(
     db: &Database,
     type_names: &BTreeMap<u64, String>,
+    proven_claim_ids: &BTreeSet<String>,
     classes: &mut BTreeMap<String, ClassBuilder>,
 ) {
     for claim in &db.claims {
-        let proven = db.claim_is_proven(claim);
+        let proven = proven_claim_ids.contains(&claim.id);
         match &claim.subject {
             // CodeView also reports zero-sized enum, forward, and compiler-internal
             // records through the same low-level path. Zero is never a valid
@@ -138,7 +148,36 @@ fn collect_claims(
     }
 }
 
-fn collect_vtables(db: &Database, classes: &mut BTreeMap<String, ClassBuilder>) {
+fn collect_vtables(
+    db: &Database,
+    proven_claim_ids: &BTreeSet<String>,
+    classes: &mut BTreeMap<String, ClassBuilder>,
+) {
+    let mut slot_claims = BTreeMap::<VtableSlotKey, (Vec<String>, bool)>::new();
+    for claim in &db.claims {
+        let ClaimSubject::VtableSlot {
+            owner,
+            table_rva,
+            table_object_offset,
+            slot,
+            target_rva,
+        } = &claim.subject
+        else {
+            continue;
+        };
+        let entry = slot_claims
+            .entry((
+                owner.clone(),
+                *table_rva,
+                *table_object_offset,
+                *slot,
+                *target_rva,
+            ))
+            .or_default();
+        entry.0.push(claim.id.clone());
+        entry.1 |= proven_claim_ids.contains(&claim.id);
+    }
+
     for table in &db.vtables {
         let Some(owner) = vtable_owner(table) else {
             continue;
@@ -162,25 +201,10 @@ fn collect_vtables(db: &Database, classes: &mut BTreeMap<String, ClassBuilder>) 
         {
             let slot = value_u32(entry, "slot").unwrap_or(0);
             let target_rva = value_u32(entry, "target_rva").unwrap_or(0);
-            let claim_ids: Vec<String> = db
-                .claims
-                .iter()
-                .filter(|claim| {
-                    matches!(
-                        claim.subject,
-                        ClaimSubject::VtableSlot {
-                            owner: ref claim_owner,
-                            table_rva,
-                            table_object_offset: claim_offset,
-                            slot: claim_slot,
-                            target_rva: claim_target,
-                            ..
-                        } if claim_owner == &owner && table_rva == rva && claim_offset == object_offset && claim_slot == slot && claim_target == target_rva
-                    )
-                })
-                .map(|claim| claim.id.clone())
-                .collect();
-            let verified = db.vtable_slot_is_verified(&owner, rva, object_offset, slot, target_rva);
+            let key = (owner.clone(), rva, object_offset, slot, target_rva);
+            let (claim_ids, verified) = slot_claims
+                .get(&key)
+                .map_or_default(|(ids, verified)| (ids.clone(), *verified));
             slots.push(SemanticVtableSlot {
                 slot,
                 target_rva,
@@ -539,7 +563,7 @@ fn import_manual_field(
     });
 }
 
-fn project_enums(db: &Database) -> Vec<SemanticEnum> {
+fn project_enums(db: &Database, proven_claim_ids: &BTreeSet<String>) -> Vec<SemanticEnum> {
     let mut values = BTreeMap::<String, Vec<(String, i64, String, bool)>>::new();
     let underlying_types: BTreeMap<String, String> = db
         .types
@@ -561,7 +585,7 @@ fn project_enums(db: &Database) -> Vec<SemanticEnum> {
                 name.clone(),
                 *value,
                 claim.id.clone(),
-                db.claim_is_proven(claim),
+                proven_claim_ids.contains(&claim.id),
             ));
         }
     }
@@ -858,5 +882,58 @@ mod tests {
             db.semantic.classes[0].fields[0].status,
             SemanticStatus::Verified
         );
+    }
+
+    #[test]
+    fn proven_vtable_slot_projects_from_the_claim_index() {
+        let mut db = Database {
+            vtables: vec![serde_json::json!({
+                "class_name": "Example",
+                "rva": 4096,
+                "entries": [{"slot": 2, "target_rva": 8192}]
+            })],
+            evidence: vec![Evidence {
+                id: "ev:slot".into(),
+                kind: EvidenceKind::PdbRecord,
+                tool: EvidenceTool::Pdb,
+                rule_id: "test".into(),
+                rule_version: 1,
+                location: EvidenceLocation::default(),
+                observation: EvidenceObservation::Text {
+                    text: "vtable slot".into(),
+                },
+            }],
+            proofs: vec![Proof {
+                id: "proof:slot".into(),
+                rule_id: "test".into(),
+                rule_version: 1,
+                passed: true,
+                obligations: vec![ProofObligation {
+                    name: "ok".into(),
+                    satisfied: true,
+                    detail: "ok".into(),
+                }],
+            }],
+            claims: vec![Claim {
+                id: "claim:slot".into(),
+                subject: ClaimSubject::VtableSlot {
+                    owner: "Example".into(),
+                    table_rva: 4096,
+                    table_object_offset: None,
+                    slot: 2,
+                    target_rva: 8192,
+                },
+                status: ClaimStatus::Corroborated,
+                usability: Usability::Verified,
+                evidence_ids: vec!["ev:slot".into()],
+                proof_id: Some("proof:slot".into()),
+            }],
+            ..Database::default()
+        };
+
+        project(&mut db);
+        let slot = &db.semantic.classes[0].vtables[0].slots[0];
+        assert_eq!(slot.status, SemanticStatus::Verified);
+        assert_eq!(slot.claim_ids, vec!["claim:slot"]);
     }
 }

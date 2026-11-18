@@ -508,6 +508,7 @@ fn binary_info(dll: &Path, bytes: &[u8], pe: &PE<'_>, base: u64) -> BinaryInfo {
             .optional_header
             .as_ref()
             .map(|header| u64::from(header.windows_fields.size_of_image)),
+        entry_point_rva: (pe.entry != 0).then_some(pe.entry),
         // API sets are forwarders - recording them hides the module that
         // actually satisfies the import, which is the edge worth having.
         dependencies: {

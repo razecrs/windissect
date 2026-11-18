@@ -14,13 +14,14 @@ struct Surface<'a> {
 }
 
 pub fn emit(db: &Database, out: &Path) -> Result<()> {
+    let proven_claim_ids = db.proven_claim_ids();
     let verified = Surface {
         schema: db.schema,
         binary: &db.binary,
         claims: db
             .claims
             .iter()
-            .filter(|claim| db.claim_is_proven(claim))
+            .filter(|claim| proven_claim_ids.contains(claim.id.as_str()))
             .collect(),
     };
     let evidence_only = Surface {

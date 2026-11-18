@@ -1,59 +1,62 @@
 # Windissect compatibility corpus
 
-Generated: `2026-09-16T21:02:18.1349139Z`  
-Windows build: `10.0.26200`  
+Generated: `2026-11-05T20:33:15.2425264Z`  
+Windows build: `10.0.26300`  
 Architecture: `AMD64`  
-Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2FF0C`
+Extractor SHA-256: `5382D9F199FF1A9BD7922EF005B74A8DD28629324213FCE39C1114552BE9B9C9`
 
 - Exact-build PDB verified: 148
-- Static-only verified: 2
-- Required failures: 28
+- Static-only verified: 26
+- Required failures: 9
 - Optional failures/unavailable: 4
+- Pending required: 0
+- Pending optional: 1
+- Indexed targets: 188
 
 | Target | Binary | Status | PDB identity | Binary SHA-256 |
 |---|---|---|---|---|
 | `taskbar-view` | `C:\WINDOWS\SystemApps\MicrosoftWindows.Client.Core_cw5n1h2txyewy\Taskbar.View.dll` | `verified-pdb` | `1A545A37EB1E419AB835E94A8F18F077+1` | `22abd1f0bb23c89679676499473b1504f53a7786f2824461c57ba7348495550b` |
-| `dui70` | `dui70.dll` | `failed-required` | — | — |
-| `duser` | `duser.dll` | `failed-required` | — | — |
-| `uxtheme` | `uxtheme.dll` | `failed-required` | — | — |
+| `dui70` | `dui70.dll` | `verified-static` | `30779A883FCC9788695B1C8EBD6CFBEA+1` | `13abb181bf863cdbf3472b7e2459addbcdb85ac486a7b044342628272fda3267` |
+| `duser` | `duser.dll` | `verified-static` | `C36A3C0E8C3BC54B692D4158C2EF10F7+1` | `1ed17eeceb85e591c06e95cf552252b092c17ff53a0aa1a6d80a3890a2fcc7bb` |
+| `uxtheme` | `uxtheme.dll` | `verified-static` | `E3B000F9BC9FEB681571367B75481222+1` | `75b98acc9146e536134126925b75c9efc33fc92e478ccca08d8c9512cf4271a4` |
 | `windowsinternal-composableshell-desktophosting` | `C:\Windows\ShellComponents\WindowsInternal.ComposableShell.DesktopHosting.dll` | `verified-static` | `B6AB336C85B4F8B776872896B0702F8E+1` | `29362ba4243c2529c831d2896c65bfdc52f1291fd2dc8c366a31245ebecca6e7` |
 | `windowsinternal-composableshell-experiences-suggestionuiundocked` | `C:\WINDOWS\SystemApps\SxS\MicrosoftWindows.61869836.InpApp_cw5n1h2txyewy\WindowsInternal.ComposableShell.Experiences.SuggestionUIUndocked.dll` | `verified-pdb` | `CA43E8E793B54D15A2CF904E62B4B0BE+1` | `cfa89f83da64cb10dab5e5473e21f8c9d80137362ca5fefeda74e56e773fb7fc` |
 | `windowsinternal-composableshell-experiences-switcher` | `C:\Windows\ShellComponents\WindowsInternal.ComposableShell.Experiences.Switcher.dll` | `verified-static` | `F0E4BFEBCD5B4D91B101E8ACA97B4EB3+1` | `52a335f483b7d4cb7e886f4477406705748529b83c3da4833f5f3e94ebe8ba6b` |
-| `dcomp` | `dcomp.dll` | `failed-required` | — | — |
+| `dcomp` | `dcomp.dll` | `verified-static` | `332D07E940D5A60AA8066EB68BE6D1D4+1` | `4077bf81a9a178d097288ed5b47a66b21881fb7581ddd142e53e66f0f94376ed` |
 | `dcompi` | `C:\WINDOWS\SystemApps\Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe\dcompi.dll` | `verified-pdb` | `1D2CBCBB0F02D69AF6918085A83937DC+1` | `b78521c0beaa9b4f82ffa7613960e4cd89355c4b50e4ac9906794c42097b8d00` |
-| `dwmapi` | `dwmapi.dll` | `failed-required` | — | — |
+| `dwmapi` | `dwmapi.dll` | `verified-static` | `03449B4864BEFF0E155BEB1845861AF7+1` | `733c4dbf3e3fc521199ae57a5adc0b780d8c63d3de96676670cbf6d27cfed5e2` |
 | `dwmcorei` | `C:\WINDOWS\SystemApps\Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe\dwmcorei.dll` | `verified-pdb` | `D374FE9A431FDA4DDBC19286E805DACD+1` | `e11f98a4e2ee71802c3c85aa1ccc880a6cb114c66c8e25e6987942f8c72dd88a` |
 | `microsoft-ui-composition-ossupport` | `C:\WINDOWS\SystemApps\Microsoft.WindowsAppRuntime.CBS.2_8wekyb3d8bbwe\Microsoft.UI.Composition.OSSupport.dll` | `verified-pdb` | `7DAE910C92E7B693BE6715ACFED01342+1` | `3987e2e98db5805b96ccaeccefe17a790e780306d4e006a98555f3bd1ddfa3a0` |
 | `globinputhost` | `globinputhost.dll` | `verified-pdb` | `B0BAAD48B12C9140255D1ECF29A3DE87+1` | `4953efe66e6e56cf58e79a47fced7bd6f17e17140c196f5c130f383895114293` |
 | `inputapp` | `C:\WINDOWS\SystemApps\SxS\MicrosoftWindows.61869836.InpApp_cw5n1h2txyewy\InputApp.dll` | `verified-pdb` | `97382E2898574854BA4E54B4B748AE5A+1` | `d33dfb67c52a0af70fcc8bf37ce54c98ed7f6a8a751e7a361eced569ee478d1e` |
-| `inputhost` | `InputHost.dll` | `verified-pdb` | `ABCDD08862C83DBF2EE2F171207BBB2F+1` | `4e84bb64485a6be5226b0beb77154d207310dffe02d5fb157828d16783d7e46d` |
+| `inputhost` | `inputhost.dll` | `verified-static` | `43E9A4DF8C08085AE228676BCC7BD27F+1` | `5ce5116117631286e6f51033deeffb24ec151a9407d003d67fc5a9a749dee578` |
 | `inputswitch` | `C:\Windows\System32\InputSwitch.dll` | `verified-pdb` | `E8A3047D4426CA8EF5FC4F478CF759CE+1` | `124c85e2974ac0021cc02555be9f78b7c509d2bab5a165b49d367e182239731f` |
-| `uDWM` | `uDWM.dll` | `failed-required` | — | — |
-| `dwmcore` | `dwmcore.dll` | `failed-required` | — | — |
-| `ExplorerFrame` | `ExplorerFrame.dll` | `failed-required` | — | — |
-| `shell32` | `shell32.dll` | `failed-required` | — | — |
-| `shlwapi` | `shlwapi.dll` | `failed-required` | — | — |
-| `comctl32` | `comctl32.dll` | `failed-required` | — | — |
-| `user32` | `user32.dll` | `failed-required` | — | — |
-| `twinui` | `twinui.dll` | `failed-required` | — | — |
-| `twinui.pcshell` | `twinui.pcshell.dll` | `failed-required` | — | — |
-| `taskbar` | `taskbar.dll` | `failed-required` | — | — |
-| `startdocked` | `StartDocked.dll` | `verified-pdb` | `4D1118B55FE1E878DF56406777DB9801+1` | `c8ba972b5c1240aea8e2b9119e099632361969b57a66074a265fa21497c39aa4` |
-| `twinapi` | `twinapi.dll` | `failed-required` | — | — |
-| `twinapi.appcore` | `twinapi.appcore.dll` | `failed-required` | — | — |
-| `windows.ui.xaml` | `windows.ui.xaml.dll` | `failed-required` | — | — |
-| `Microsoft.ui.xaml` | `Microsoft.ui.xaml.dll` | `failed-required` | — | — |
-| `Microsoft.UI.Windowing.Core` | `Microsoft.UI.Windowing.Core.dll` | `failed-required` | — | — |
-| `SndVolSSO` | `SndVolSSO.dll` | `failed-required` | — | — |
-| `controlcenter` | `ControlCenter.dll` | `verified-pdb` | `DF9EB504497489406F7BE1FFB9144D54+1` | `3e9a30bd1e92220baeeba90cd0ac409ae541c650019ad7c80aec97daf39c3261` |
-| `ActionCenter` | `ActionCenter.dll` | `failed-required` | — | — |
-| `pnidui` | `pnidui.dll` | `failed-required` | — | — |
-| `coremessaging` | `CoreMessaging.dll` | `verified-pdb` | `46238A8B3F58B1B4DFE8CF4CB68533C0+1` | `88c7b4d6ee26f7695de0885f39db2949ad77bffc20902b0d19fde7f7ad9d31bc` |
-| `textinputframework` | `TextInputFramework.dll` | `verified-pdb` | `34A2C0A7DA23212E70024181ADFB5B3C+1` | `70640d668839f52d89e7be41655559538b08181c57b6f4df1b2f76883261d75c` |
-| `windows.storage` | `windows.storage.dll` | `failed-required` | — | — |
-| `shellcommon` | `shellcommon.dll` | `failed-required` | — | — |
-| `SystemSettings.View` | `SystemSettings.View.dll` | `failed-required` | — | — |
-| `Taskmgr` | `Taskmgr.dll` | `failed-required` | — | — |
+| `uDWM` | `uDWM.dll` | `verified-static` | `92371FA3FC9C8E4986688BEE849DE234+1` | `0f3b42b00f35f63e54d2b94ee6b36df7b05f320db8d08a1b613c93ccfb7600dc` |
+| `dwmcore` | `dwmcore.dll` | `verified-static` | `08491F8213CA601DE6DA72D506F0E070+1` | `33927317600cb7a29e6e4746c0dd73828204a6507f084189c200a7027a0e2697` |
+| `ExplorerFrame` | `ExplorerFrame.dll` | `verified-static` | `822A8C93960AC7B67F6A87CF48E8CE6F+1` | `b7bda6011c0c13a81a6ea9670789c3ecb241caf994d31e274add18704929ca6d` |
+| `shell32` | `shell32.dll` | `verified-static` | `E5F50DE105B255C9B37281C191A99E13+1` | `be4d90cdb64b98be38083576f872015615ac6930e6c7c462d125a2e50767b887` |
+| `shlwapi` | `shlwapi.dll` | `verified-static` | `6EE62103BE2AA3702ADF815CC1933DBC+1` | `2708f3d0191400173c2d0917ae189e7089b8bec7e1f35f8f85be383fa610d94c` |
+| `comctl32` | `comctl32.dll` | `verified-static` | `42C599C2BA802DF8BB608D554F29B802+1` | `67e04b3a6650430ba7b57ce01180d7a8f2e06fb04570f4c26b511e6cb05b1761` |
+| `user32` | `user32.dll` | `verified-static` | `F0BF56EE0A784974D49A58173A7CBC7E+1` | `f285937030bcb325cad39ee5be4818f6666241229adeadea4ff1ae469dfd7ef3` |
+| `twinui` | `twinui.dll` | `verified-static` | `FDDD5C12E412A64AD5FB8AA23B502987+1` | `b2262a842adf22f78bf596dcf6815f1b3aec282469995d939901e93bcf943d65` |
+| `twinui.pcshell` | `twinui.pcshell.dll` | `verified-static` | `9507F3DAD47F5F026569FC50273C40D7+1` | `8ba440eded430a2417692a98b34695a12ad0ee000333dfed07e0c2723e17111c` |
+| `taskbar` | `taskbar.dll` | `verified-static` | `0A5DD95BEF53208B28B2F3D8586E6426+1` | `7c84d8f9ef231898dda10c705d7ef344c14b1e58ddeef4bd9d063429daead2f3` |
+| `StartDocked` | `StartDocked.dll` | `failed-required` | - | - |
+| `twinapi` | `twinapi.dll` | `verified-static` | `2561CD905D3B3762F1A927F71D06780B+1` | `2ce9e0fba63a8c61fd71cd73b6bf2cc141a7a1a2762c6e01106f430c5a1361ec` |
+| `twinapi.appcore` | `twinapi.appcore.dll` | `verified-static` | `3E81A4DC7C5A861B82BA7E1E06C04EA4+1` | `66c73a099a84c94fb56f16ad3591b86f625434d75e975441ee213cfdc6fee2ec` |
+| `windows.ui.xaml` | `windows.ui.xaml.dll` | `verified-static` | `EDDE255003FB1105C52E35C9413FE7DD+1` | `5b653bc535d87e7301c7ab9b4785fb7f0f6de5481ece03e7e7a89ca3e53e6905` |
+| `Microsoft.ui.xaml` | `Microsoft.ui.xaml.dll` | `failed-required` | - | - |
+| `Microsoft.UI.Windowing.Core` | `Microsoft.UI.Windowing.Core.dll` | `failed-required` | - | - |
+| `SndVolSSO` | `SndVolSSO.dll` | `verified-static` | `8108F7391974C9CB1B4711508720AFDE+1` | `917c8c423e103ec54a7c61b801dc7e69c1f5c3a3499945dd306ad7ac043b48de` |
+| `ControlCenter` | `ControlCenter.dll` | `verified-static` | `69549732A6CF1C43FDF7ED1FD2227E42+1` | `0a9a84b0b7ed6110a410bd76150ce0da04dc29b901838155ab7ce2d8bf2ffb51` |
+| `ActionCenter` | `ActionCenter.dll` | `verified-static` | `2ECD92DD2D3CBD4EB485BD20670E253E+1` | `dd57bf908df8a252fce17adedf7abac4a6766de2b4bccf3bea0bf709a55c5d94` |
+| `pnidui` | `pnidui.dll` | `failed-required` | - | - |
+| `CoreMessaging` | `CoreMessaging.dll` | `verified-static` | `0DE392AB38053E598ED9F336D230446C+1` | `3405ac9fa03f3a37a48236ef15e71ab36dc70c0b1f089c209c47ee137dfc2c65` |
+| `textinputframework` | `textinputframework.dll` | `verified-static` | `EEAF2534DD6FFF5D8B6FC8F7D4DF1E1C+1` | `4b342558d050f88d3d1f344eaae4ea4498469a3e8a92cbb63231fad39714f92f` |
+| `windows.storage` | `windows.storage.dll` | `failed-required` | - | - |
+| `shellcommon` | `shellcommon.dll` | `failed-required` | - | - |
+| `SystemSettings.View` | `SystemSettings.View.dll` | `failed-required` | - | - |
+| `Taskmgr` | `Taskmgr.dll` | `failed-required` | - | - |
 | `shellhost` | `ShellHost.exe` | `verified-pdb` | `62452854C6BCA7CA97A4B9613A22E563+1` | `75268bc04679fdddbea23e72274351641e44bd7019d8c625d61fbdc574ec0353` |
 | `starttiledata` | `StartTileData.dll` | `verified-pdb` | `FE7C28895409E34E881F63B6AD9D629F+1` | `db48f49bb805369004bdcbb8e6dbb17cea7136631d96e350f3565823341863d3` |
 | `windowsudk-shellcommon` | `windowsudk.shellcommon.dll` | `verified-pdb` | `9822102D70F00C0B47429243D36A704F+1` | `ee6a83ed76e766069f0b30817e7a81862a0527d9059d2d903b3a89d6cbd5d1e4` |
@@ -77,9 +80,9 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `directxdatabasehelper` | `directxdatabasehelper.dll` | `verified-pdb` | `9747AAF567DC615CA025165F35B52FF1+1` | `10742f32cdc1b37ecd6d7fe052ebbd31e9e78e049c2faeed96a634397dc0a70c` |
 | `dmcmnutils` | `DMCmnUtils.dll` | `verified-pdb` | `DC71435A82F311F71E99AF34D7E121D3+1` | `32cbca7a451c9b865c68119d813dac67f9df6ceb96e0529695b00f8cebf14b88` |
 | `dmiso8601utils` | `dmiso8601utils.dll` | `verified-pdb` | `2BBA8F6D11E942080C06E27F2240CB93+1` | `aa691488f157c0092eb83b4654ae7192611d0d459e8319a1baaa230b1b2e351d` |
-| `igc64` | `igc64.dll` | `unavailable-optional` | — | — |
-| `igd10iumd64` | `igd10iumd64.dll` | `unavailable-optional` | — | — |
-| `igdgmm64` | `igdgmm64.dll` | `unavailable-optional` | — | — |
+| `igc64` | `igc64.dll` | `unavailable-optional` | - | - |
+| `igd10iumd64` | `igd10iumd64.dll` | `unavailable-optional` | - | - |
+| `igdgmm64` | `igdgmm64.dll` | `unavailable-optional` | - | - |
 | `dsparse` | `DSPARSE.dll` | `verified-pdb` | `8FA49081BBE43D8CBFF3D9797D087DB2+1` | `c78ac36d970b6fa79206a161d4ded0886879c4df80791dd22650a8a7afd9c2eb` |
 | `edputil` | `edputil.dll` | `verified-pdb` | `0237317E68D2A8848BCC0E547EA8962B+1` | `d2192946fe59b7b45598eca96702a14b3cb5012ff448dc27c9e3407d7a2468e4` |
 | `execmodelproxy` | `execmodelproxy.dll` | `verified-pdb` | `748B4316D4B2BB27C0F46F021482CB11+1` | `f70f32996492908d829280e367b93a423d35a2b216dd986ede951762fa46cec8` |
@@ -119,7 +122,7 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `rsaenh` | `rsaenh.dll` | `verified-pdb` | `C1CBDCFF3D390DA0721FDD1FE5F444DE+1` | `731771049467b6d01c7028a1269df17da37af8d323621e01a32856e306795400` |
 | `rtmediaframe` | `RTMediaFrame.dll` | `verified-pdb` | `C2575B0256F393C3262ECD8B288877D7+1` | `9f37620a788c6e7dbe818cdd22734b1150e9dbdace1b5f69124c448d71f27241` |
 | `shellcommoncommonproxystub` | `ShellCommonCommonProxyStub.dll` | `verified-pdb` | `6616FBFB0E617D8E3DA456908C09D9ED+1` | `bc69dbdb41d1de1d779b1367694863f0e55ad14629e2cdf8d7619ae4e00f1923` |
-| `windows-ui-shell-sharedutilities` | `Windows.UI.Shell.SharedUtilities.dll` | `unavailable-optional` | — | — |
+| `windows-ui-shell-sharedutilities` | `Windows.UI.Shell.SharedUtilities.dll` | `unavailable-optional` | - | - |
 | `shutdownux` | `ShutdownUX.dll` | `verified-pdb` | `1C80E48FAFEB65ACF2834872F08F30E2+1` | `3c31e30fa18e273c1132f37556a2434a24b17f4ca97b56fbb20f4dd3781b1c9a` |
 | `srvcli` | `srvcli.dll` | `verified-pdb` | `62629E90CBC14A976B1080CB2472DF03+1` | `6170dddf6a03b2b3e9520e301fb3a06fae7fb4c617b2c7d7cceb2160e829fd4d` |
 | `staterepository-core` | `StateRepository.Core.dll` | `verified-pdb` | `154386A8B04540E5567BB9195A914A9F+1` | `905c2e56f614f5b32618c11eb098eee00425792939a64486f80fe68982825511` |
@@ -193,4 +196,10 @@ Extractor SHA-256: `4224C43DD0A2E79BE5FEBECBB04846404C057F06A1397E00B4E0DE4CF2B2
 | `windows-ui-actioncenter` | `C:\WINDOWS\SystemApps\ShellExperienceHost_cw5n1h2txyewy\Windows.UI.ActionCenter.dll` | `verified-pdb` | `C0DAB2D26B6BB2465AEC9970A6EE6AC5+1` | `a82314d0b4feedba77cb4e2787b1619726df853bcac5cf5aa97150e60306ee7e` |
 | `windows-ui-quickactions` | `C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\Windows.UI.QuickActions.dll` | `verified-pdb` | `AC9E6245F50A4CF857F159429404017B+1` | `90c5e0934506a8537050f133b1c5a638dcf99d976cee7c0c6db3ded133a873c2` |
 | `gdiplus` | `C:\WINDOWS\WinSxS\amd64_microsoft.windows.gdiplus_6595b64144ccf1df_1.1.26100.9444_none_6ef568883dc4f9e8\gdiplus.dll` | `verified-pdb` | `DDF19AA09F285660C86065C38EF751A4+1` | `ce338c682031358a3f599430b6c7f3baa80a72ae392e8a885489bb02a5231a8c` |
-| `WindowsInternal.ComposableShell.DesktopHosting` | `C:/Windows/SystemApps/MicrosoftWindows.Client.Core_cw5n1h2txyewy/WindowsInternal.ComposableShell.DesktopHosting.dll` | `failed-required` | — | — |
+| `WindowsInternal.ComposableShell.DesktopHosting` | `C:/Windows/SystemApps/MicrosoftWindows.Client.Core_cw5n1h2txyewy/WindowsInternal.ComposableShell.DesktopHosting.dll` | `failed-required` | - | - |
+| `ntdll` | `ntdll.dll` | `verified-pdb` | `C031D45B0DA18A6E74D06ED6AB2DD9E1+1` | `651ac9041af8e6b5ebd331d53163244c0a27d36d1433f0f15cac1f28c5f2e82c` |
+| `Taskbar.View` | `Taskbar.View.dll` | `pending-optional` | - | - |
+| `dxgi` | `dxgi.dll` | `verified-pdb` | `5772469FB293D6CAF3C5C6E237984B9F+1` | `84bc502f36687bb6c4dd9763d109c6ed7339767ed50a8a70707761563dd3e816` |
+| `d3d11` | `d3d11.dll` | `verified-pdb` | `BB109D153B97D5885F8505D9A45F0771+1` | `9253355cd78fbc6aacb72e91be264d04b145ef06d64cbf496c8de3e5f0e44edb` |
+| `mfplat` | `mfplat.dll` | `verified-pdb` | `5F090E31EB4E9D731D7EEE126E9B1798+1` | `aed572a857fc3595978045070c0a530936a41bb2c1ea8af5770757d54aecbc2a` |
+| `mfreadwrite` | `mfreadwrite.dll` | `verified-pdb` | `70CC0B418DDB66455A02F7F76E77C7D0+1` | `b8295795734e17552fe0b9383426ed2543227d5155a2e8f3ff621a544e3cba4d` |

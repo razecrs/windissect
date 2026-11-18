@@ -946,7 +946,10 @@ func writeCorpusReport(root string, index corpusIndex) error {
 	fmt.Fprintf(&report, "- Exact-build PDB verified: %d\n", counts["verified-pdb"])
 	fmt.Fprintf(&report, "- Static-only verified: %d\n", counts["verified-static"])
 	fmt.Fprintf(&report, "- Required failures: %d\n", counts["failed-required"])
-	fmt.Fprintf(&report, "- Optional failures/unavailable: %d\n\n", counts["failed-optional"]+counts["unavailable-optional"])
+	fmt.Fprintf(&report, "- Optional failures/unavailable: %d\n", counts["failed-optional"]+counts["unavailable-optional"])
+	fmt.Fprintf(&report, "- Pending required: %d\n", counts["pending-required"])
+	fmt.Fprintf(&report, "- Pending optional: %d\n", counts["pending-optional"])
+	fmt.Fprintf(&report, "- Indexed targets: %d\n\n", len(index.Targets))
 	report.WriteString("| Target | Binary | Status | PDB identity | Binary SHA-256 |\n")
 	report.WriteString("|---|---|---|---|---|\n")
 	for _, target := range index.Targets {
@@ -974,6 +977,40 @@ func writeCorpusReport(root string, index corpusIndex) error {
 		return err
 	}
 	return replaceFile(temporary, final)
+}
+
+// seedCorpusCoverage records the complete declared corpus before any expensive
+// extraction begins. Without these placeholders an interrupted 380-target run
+// could publish an index containing only the 110 targets reached so far and
+// still claim zero failures: the remaining 270 simply did not exist to count.
+// Targeted --only runs also use the complete manifest here, so they improve one
+// entry without erasing the fact that the rest of a new corpus is pending.
+func seedCorpusCoverage(root, extractorPath string, targets []targetSpec) error {
+	existing := make(map[string]bool)
+	for _, result := range readCorpusIndex(root).Targets {
+		existing[corpusKey(result.ID)] = true
+	}
+	updates := make([]corpusResult, 0, len(targets))
+	for _, target := range targets {
+		if existing[corpusKey(target.ID)] {
+			continue
+		}
+		status := "pending-optional"
+		if target.Required {
+			status = "pending-required"
+		}
+		updates = append(updates, corpusResult{
+			ID:       target.ID,
+			File:     target.File,
+			Area:     target.Area,
+			Required: target.Required,
+			Status:   status,
+		})
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return writeCorpusIndex(root, extractorPath, updates)
 }
 
 func readCorpusIndex(root string) corpusIndex {
@@ -1128,6 +1165,14 @@ func reusableResult(result corpusResult, sourcePath string, shallow bool) bool {
 	if !shallow && result.Depth != depthFull {
 		return false
 	}
+	if !shallow {
+		if result.Semantic == "" {
+			return false
+		}
+		if info, err := os.Stat(result.Semantic); err != nil || !info.IsDir() {
+			return false
+		}
+	}
 	if info, err := os.Stat(result.IR); err != nil || info.IsDir() {
 		return false
 	}
@@ -1258,6 +1303,12 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[!] manifest: %v\n", err)
 			os.Exit(2)
+		}
+	}
+	if cmd == "pull" || cmd == "all" {
+		if err := seedCorpusCoverage(root, extractorPath, targets); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] seed corpus coverage: %v\n", err)
+			os.Exit(1)
 		}
 	}
 	if onlyOption != "" {

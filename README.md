@@ -64,6 +64,64 @@ This analyzes your installed `amsi.dll`, verifies the IR, and writes C, C++,
 Rust, symbol and evidence output to `target/demo/amsi/`. See
 [docs/quickstart.md](docs/quickstart.md) for the full DirectUI run.
 
+## Interactive terminal UI
+
+An Ink-based terminal workbench provides guided forms, exact command previews,
+live output, cancellation, and status reporting for the most common workflows:
+
+```powershell
+cd tui
+npm install
+npm run dev
+```
+
+It drives the same Windissect executable and does not reinterpret results or
+mix verified facts with candidates. See [tui/README.md](tui/README.md).
+
+Launching `windissect` without a subcommand opens the TUI. For a complete
+non-interactive workspace in one command:
+
+```powershell
+windissect analyze challenge.exe --out windissect-work\challenge
+```
+
+Interactive launch stays in the current terminal without elevation. Use
+`windissect --elevate` only when administrator access is actually required;
+Windows UAC necessarily opens a new elevated process. Relative output paths are
+resolved against the directory where Windissect was launched, and every
+generated-file message prints the full absolute path. If Windows refuses to
+open a target, Windissect queries Restart Manager and reports the locking
+application and PID when available.
+
+This writes IR, a string inventory, annotated assembly, C/C++ headers, Rust
+bindings, strict evidence surfaces, documentation, and runs IR verification.
+When IDA/Hex-Rays is installed, it also writes `pseudocode.c` plus a provenance
+JSON file. Pseudocode is always labeled candidate output: it is reconstructed
+logic, not verified original source.
+
+The decompiler stage can also be run alone:
+
+```powershell
+windissect decompile challenge.exe --out pseudocode.c
+windissect decompile challenge.exe --rva 0x2550 --out sub_2550.c
+windissect decompile challenge.exe --scope all --out every_function.c
+```
+
+The default `target` scope starts from `main`, `WinMain`, or the image entry
+point, follows direct calls, and stops at recognized compiler/CRT/library
+boundaries. Use `--scope all` when those implementation bodies are wanted.
+
+Inside the TUI, **Browse functions** opens a split explorer: the function
+inventory stays on the left while evidence, confidence, calls, imports and an
+assembly preview update on the right. Open a function and press `d` to
+decompile only that RVA and read the candidate C inline. Compiler/runtime
+helpers are hidden by default and can be toggled with `h`.
+
+The TUI runs in the PowerShell that launched it and does not request elevation.
+`--elevate` is an explicit opt-in and Windows will show a UAC prompt. Elevation
+does not bypass an exclusive file-sharing lock; Windissect instead reports the
+locking application and PID so it can be closed deliberately.
+
 ## Analyze one binary
 
 ```powershell
@@ -81,6 +139,16 @@ $wd = "target\release\windissect"
 
 The PDB is optional. Without one you get exports only, and private types are
 reported as unavailable rather than guessed.
+
+For quick binary exploration, string search does not require a PDB or IR:
+
+```powershell
+& $wd strings challenge.exe "flag{" --encoding all --min-length 4
+& $wd strings challenge.exe --json --limit 0
+```
+
+Results include the file offset, encoding, and an RVA whenever the offset maps
+into a PE image section.
 
 `emit-headers` writes `<target>.h` with verified ABI metadata and proven call
 helpers only. Everything else Windissect reconstructed goes into

@@ -724,9 +724,7 @@ pub fn compare(
     Ok(RefineReport {
         schema: 1,
         target: db.binary.file.clone(),
-        reference_root: reference_root
-            .map(|path| path.display().to_string())
-            .unwrap_or_default(),
+        reference_root: reference_root.map_or_default(|path| path.display().to_string()),
         policy: "reference declarations identify candidates only; exact-build evidence is required for IR promotion",
         generic_recoveries_applied,
         windissect_classes: our_classes.len(),
@@ -1063,7 +1061,12 @@ fn virtual_implementation_index(db: &Database) -> BTreeMap<(String, String, usiz
 
 fn proven_base_ancestors(db: &Database) -> BTreeMap<String, BTreeSet<String>> {
     let mut ancestors = BTreeMap::<String, BTreeSet<String>>::new();
-    for claim in db.claims.iter().filter(|claim| db.claim_is_proven(claim)) {
+    let proven_claim_ids = db.proven_claim_ids();
+    for claim in db
+        .claims
+        .iter()
+        .filter(|claim| proven_claim_ids.contains(claim.id.as_str()))
+    {
         if let ClaimSubject::Base { derived, base, .. } = &claim.subject {
             ancestors
                 .entry(derived.clone())
@@ -1665,7 +1668,7 @@ fn parse_header(
         }
         if let Some(name) = class_decl(line) {
             let qualified = if namespace.is_empty() {
-                name.clone()
+                name
             } else {
                 format!("{}::{name}", namespace.join("::"))
             };
@@ -2045,6 +2048,7 @@ mod tests {
                     flow: "return".into(),
                     branch_target_rva: None,
                     memory_target_rva: None,
+                    data_reference: None,
                 }],
                 cfg_edges: Vec::new(),
             }],

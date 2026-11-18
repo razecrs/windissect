@@ -691,7 +691,9 @@ fn run_enum_probe(module: *const u8, operation: &ProbeOperation) -> Result<Probe
         ..
     } = operation
     else {
-        return Err(anyhow::anyhow!("run_enum_probe called on a non-enum operation"));
+        return Err(anyhow::anyhow!(
+            "run_enum_probe called on a non-enum operation"
+        ));
     };
 
     let size = usize::try_from(*object_size).context("object size does not fit usize")?;
@@ -703,8 +705,8 @@ fn run_enum_probe(module: *const u8, operation: &ProbeOperation) -> Result<Probe
     let ctor_fn: unsafe extern "system" fn(*mut u8) = unsafe { std::mem::transmute(ctor_addr) };
     unsafe { ctor_fn(this_ptr) };
 
-    let object_offset =
-        isize::try_from(*vtable_object_offset).context("vtable object offset does not fit isize")?;
+    let object_offset = isize::try_from(*vtable_object_offset)
+        .context("vtable object offset does not fit isize")?;
     let slot_index = usize::try_from(*vtable_slot).context("vtable slot does not fit usize")?;
     let call_this = unsafe { this_ptr.offset(object_offset) };
     // The vtable pointer sits at the object's head, pointer-aligned by the C++

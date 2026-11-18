@@ -4,7 +4,7 @@
 use crate::descent;
 use crate::model::{
     Capability, CapabilityStatus, Confidence, ControlFlowEdge, Coverage, Database,
-    FunctionAnalysis, InstructionRecord, Kind, Provenance, Signature, Symbol,
+    FunctionAnalysis, InstructionRecord, Kind, Provenance, Signature, StaticDataReference, Symbol,
 };
 use anyhow::{Context, Result};
 use iced_x86::{
@@ -30,11 +30,18 @@ pub fn enrich_database(db: &mut Database, pe_bytes: &[u8]) -> Result<()> {
     calculate_function_sizes(db, &pe);
     let analysis = analyze_functions(db, pe_bytes, &pe, bitness);
     apply_analysis(db, analysis);
+    let static_data_references = attach_static_data(db, pe_bytes, &pe);
     db.capabilities.push(Capability {
         id: "canonical-x86-instructions-cfg".into(),
         status: CapabilityStatus::Supported,
         analyzer: "enrich".into(),
         reason: format!("{} unique code RVAs decoded", db.functions.len()),
+    });
+    db.capabilities.push(Capability {
+        id: "resolved-static-data".into(),
+        status: CapabilityStatus::Supported,
+        analyzer: "enrich".into(),
+        reason: format!("{static_data_references} instruction data references carry bounded bytes"),
     });
     Ok(())
 }
@@ -462,6 +469,7 @@ fn decode_body(
                 flow: format!("{:?}", inst.flow_control()).to_ascii_lowercase(),
                 branch_target_rva,
                 memory_target_rva,
+                data_reference: None,
             });
         }
 
@@ -551,6 +559,150 @@ fn apply_analysis(db: &mut Database, enrichment: Enrichment) {
     db.functions = enrichment.functions;
 }
 
+fn attach_static_data(db: &mut Database, pe_bytes: &[u8], pe: &goblin::pe::PE<'_>) -> usize {
+    const UNRESOLVED_PREVIEW: usize = 32;
+    const MAX_PROVEN_DUMP: usize = 256;
+
+    let mut attached = 0;
+    for function in &mut db.functions {
+        for index in 0..function.instructions.len() {
+            let Some(target_rva) = function.instructions[index].memory_target_rva else {
+                continue;
+            };
+            let Some(section) = pe.sections.iter().find(|section| {
+                let extent = section.virtual_size.max(section.size_of_raw_data);
+                target_rva >= section.virtual_address
+                    && target_rva < section.virtual_address.saturating_add(extent)
+            }) else {
+                continue;
+            };
+            if section.characteristics & goblin::pe::section_table::IMAGE_SCN_MEM_EXECUTE != 0 {
+                continue;
+            }
+            let Some(delta) = target_rva.checked_sub(section.virtual_address) else {
+                continue;
+            };
+            if delta >= section.size_of_raw_data {
+                continue;
+            }
+            let Some(raw_offset) = section.pointer_to_raw_data.checked_add(delta) else {
+                continue;
+            };
+            let Ok(file_offset) = usize::try_from(raw_offset) else {
+                continue;
+            };
+            if file_offset >= pe_bytes.len() {
+                continue;
+            }
+
+            let inferred = infer_byte_loop_size(&function.instructions, index);
+            let requested = inferred
+                .as_ref()
+                .map_or(UNRESOLVED_PREVIEW, |(size, _, _)| {
+                    usize::try_from(*size).unwrap_or(MAX_PROVEN_DUMP)
+                });
+            let section_remaining = usize::try_from(section.size_of_raw_data - delta).unwrap_or(0);
+            let available = section_remaining.min(pe_bytes.len() - file_offset);
+            let preview_size = requested.min(MAX_PROVEN_DUMP).min(available);
+            if preview_size == 0 {
+                continue;
+            }
+            let bytes = pe_bytes[file_offset..file_offset + preview_size]
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let section_name = section
+                .name()
+                .ok()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("<unnamed>")
+                .to_owned();
+            let (inferred_size, size_evidence_rva, size_source) = inferred
+                .map_or((None, None, None), |(size, evidence, source)| {
+                    (Some(size), Some(evidence), Some(source))
+                });
+            function.instructions[index].data_reference = Some(StaticDataReference {
+                rva: target_rva,
+                virtual_address: pe.image_base + u64::from(target_rva),
+                section: section_name,
+                file_offset: u64::from(raw_offset),
+                inferred_size,
+                size_source,
+                size_evidence_rva,
+                bytes,
+                preview_size: u32::try_from(preview_size).unwrap_or(u32::MAX),
+                truncated: inferred_size.is_some_and(|size| preview_size < size as usize),
+            });
+            attached += 1;
+        }
+    }
+    attached
+}
+
+/// Recognize a byte-table loop whose back-edge is bounded by `cmp index, imm`.
+/// This deliberately handles only the mechanically unambiguous jb/jbe forms.
+fn infer_byte_loop_size(
+    instructions: &[InstructionRecord],
+    reference_index: usize,
+) -> Option<(u32, u32, String)> {
+    let reference_rva = instructions.get(reference_index)?.rva;
+    let end = (reference_index + 32).min(instructions.len());
+    let window = &instructions[reference_index..end];
+    if !window
+        .iter()
+        .any(|instruction| instruction.text.contains("byte ptr"))
+        || !window
+            .iter()
+            .any(|instruction| instruction.mnemonic == "add")
+    {
+        return None;
+    }
+    for pair in window.windows(2) {
+        let compare = &pair[0];
+        let branch = &pair[1];
+        let Some(target) = branch.branch_target_rva else {
+            continue;
+        };
+        if compare.mnemonic != "cmp" || target > reference_rva {
+            continue;
+        }
+        let Some(size) = count_from_cmp_branch(&compare.text, &branch.mnemonic) else {
+            continue;
+        };
+        if size == 0 || size > 1_048_576 {
+            continue;
+        }
+        return Some((
+            size,
+            compare.rva,
+            format!(
+                "byte loop bound from {} + {} back-edge",
+                compare.text, branch.mnemonic
+            ),
+        ));
+    }
+    None
+}
+
+fn count_from_cmp_branch(compare: &str, branch: &str) -> Option<u32> {
+    let operand = compare.rsplit_once(',')?.1.trim();
+    let limit = if let Some(hex) = operand.strip_suffix('h') {
+        u32::from_str_radix(hex.trim_start_matches('0'), 16)
+            .ok()
+            .or_else(|| (hex.chars().all(|c| c == '0')).then_some(0))?
+    } else if let Some(hex) = operand.strip_prefix("0x") {
+        u32::from_str_radix(hex, 16).ok()?
+    } else {
+        operand.parse().ok()?
+    };
+    match branch {
+        "jbe" | "jle" | "jna" | "jng" => limit.checked_add(1),
+        "jb" | "jl" | "jnae" | "jnge" => Some(limit),
+        _ => None,
+    }
+}
+
 /// Calculate function sizes based on address spacing and PE section boundaries.
 fn calculate_function_sizes(db: &mut Database, pe: &goblin::pe::PE) {
     let image_base = pe.image_base;
@@ -614,7 +766,7 @@ fn rva_to_offset(pe: &goblin::pe::PE, vaddr: u64) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::direct_call_target_rvas;
+    use super::{count_from_cmp_branch, direct_call_target_rvas};
 
     #[test]
     fn discovers_relative_calls_but_not_indirect_calls() {
@@ -624,5 +776,15 @@ mod tests {
         let bytes = [0xE8, 0x0B, 0x00, 0x00, 0x00, 0xFF, 0xD0, 0xC3];
         let targets = direct_call_target_rvas(&bytes, 64, start, image_base);
         assert_eq!(targets.into_iter().collect::<Vec<_>>(), vec![0x1010]);
+    }
+
+    #[test]
+    fn inclusive_byte_loop_bound_proves_thirteen_bytes() {
+        assert_eq!(
+            count_from_cmp_branch("cmp qword ptr [rbp-8],0Ch", "jbe"),
+            Some(13)
+        );
+        assert_eq!(count_from_cmp_branch("cmp rax,0Ch", "jb"), Some(12));
+        assert_eq!(count_from_cmp_branch("cmp rax,0Ch", "jne"), None);
     }
 }

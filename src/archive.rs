@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use goblin::pe::PE;
 use serde::Serialize;
 
@@ -111,26 +111,24 @@ pub fn deps_command(irs: &[PathBuf], out: Option<&Path>, recursive: bool) -> Res
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut pending: Vec<(usize, Vec<String>)> = Vec::new();
 
-    let node_for = |index: &mut BTreeMap<String, usize>,
-                        nodes: &mut Vec<GraphNode>,
-                        name: &str|
-     -> usize {
-        let key = name.to_ascii_lowercase();
-        if let Some(&i) = index.get(&key) {
-            return i;
-        }
-        let i = nodes.len();
-        nodes.push(GraphNode {
-            id: name.to_string(),
-            extracted: false,
-            symbols: None,
-            image_size: None,
-            in_degree: 0,
-            out_degree: 0,
-        });
-        index.insert(key, i);
-        i
-    };
+    let node_for =
+        |index: &mut BTreeMap<String, usize>, nodes: &mut Vec<GraphNode>, name: &str| -> usize {
+            let key = name.to_ascii_lowercase();
+            if let Some(&i) = index.get(&key) {
+                return i;
+            }
+            let i = nodes.len();
+            nodes.push(GraphNode {
+                id: name.to_string(),
+                extracted: false,
+                symbols: None,
+                image_size: None,
+                in_degree: 0,
+                out_degree: 0,
+            });
+            index.insert(key, i);
+            i
+        };
 
     for path in &files {
         let db = match load_ir(path) {
@@ -149,7 +147,7 @@ pub fn deps_command(irs: &[PathBuf], out: Option<&Path>, recursive: bool) -> Res
         nodes[i].extracted = true;
         nodes[i].symbols = Some(db.symbols.len());
         nodes[i].image_size = db.binary.image_size;
-        pending.push((i, db.binary.dependencies.clone()));
+        pending.push((i, db.binary.dependencies));
     }
 
     let mut seen: BTreeSet<(usize, usize)> = BTreeSet::new();
@@ -173,7 +171,11 @@ pub fn deps_command(irs: &[PathBuf], out: Option<&Path>, recursive: bool) -> Res
         nodes[e[1]].in_degree += 1;
     }
 
-    let graph = Graph { schema: 1, nodes, edges };
+    let graph = Graph {
+        schema: 1,
+        nodes,
+        edges,
+    };
     let extracted = graph.nodes.iter().filter(|n| n.extracted).count();
     let json = serde_json::to_vec_pretty(&graph)?;
     match out {
@@ -305,7 +307,10 @@ pub fn symbols_command(paths: &[PathBuf], server: &str, json_out: bool) -> Resul
                 let key = symbol_key_from_signature(&dbg.signature, dbg.age);
                 SymbolReport {
                     file: stem_of(path),
-                    url: Some(format!("{}/{name}/{key}/{name}", server.trim_end_matches('/'))),
+                    url: Some(format!(
+                        "{}/{name}/{key}/{name}",
+                        server.trim_end_matches('/')
+                    )),
                     pdb_name: Some(name),
                     key: Some(key),
                     note: None,
@@ -467,7 +472,9 @@ pub fn catalog_command(history: &Path, out: Option<&Path>) -> Result<()> {
         let mut out_builds = Vec::new();
         for build in builds {
             let ir = build.join("ir.json");
-            let Ok(meta) = fs::metadata(&ir) else { continue };
+            let Ok(meta) = fs::metadata(&ir) else {
+                continue;
+            };
             let head = read_head(&ir, 4096)?;
             out_builds.push(CatalogBuild {
                 key: build

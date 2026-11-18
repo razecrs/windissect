@@ -156,6 +156,13 @@ fn update_catalog(root: &Path, target: &str, index: &HistoryIndex) -> Result<()>
 
 fn build_key(db: &Database) -> String {
     let (guid, age_value) = pdb_identity(db);
+    if guid.is_none()
+        && db.binary.timestamp.is_none()
+        && let Some(sha) = db.binary.sha256.as_deref()
+        && !sha.is_empty()
+    {
+        return safe(&format!("sha256-{}", &sha[..sha.len().min(16)]));
+    }
     let guid = guid.as_deref().unwrap_or("no-pdb");
     let age = age_value.map_or_else(|| "0".into(), |v| format!("{v:X}"));
     let timestamp = db.binary.timestamp.as_deref().unwrap_or("unknown-time");

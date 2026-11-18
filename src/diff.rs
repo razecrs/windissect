@@ -48,6 +48,8 @@ pub struct SymbolState {
     pub mangled: String,
     pub demangled: Option<String>,
     pub rva: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<u32>,
     pub size: u32,
     pub kind: String,
     pub exported: bool,
@@ -66,7 +68,7 @@ impl Changed {
         Self(value)
     }
 
-    const fn get(self) -> bool {
+    pub(crate) const fn get(self) -> bool {
         self.0
     }
 }
@@ -80,6 +82,8 @@ pub struct ChangeFlags {
     pub size: Changed,
     pub kind: Changed,
     pub export_status: Changed,
+    #[serde(default)]
+    pub ordinal: Changed,
     /// Address movement is recorded but deliberately not considered behavioral.
     pub rva: Changed,
 }
@@ -123,6 +127,7 @@ pub fn compare(old: &Database, new: &Database) -> DiffReport {
             size: Changed::new(before.size != after.size),
             kind: Changed::new(before.kind != after.kind),
             export_status: Changed::new(before.exported != after.exported),
+            ordinal: Changed::new(before.ordinal != after.ordinal),
             rva: Changed::new(before.rva != after.rva),
         };
         if flags.signature.get()
@@ -132,6 +137,7 @@ pub fn compare(old: &Database, new: &Database) -> DiffReport {
             || flags.size.get()
             || flags.kind.get()
             || flags.export_status.get()
+            || flags.ordinal.get()
             || flags.rva.get()
         {
             modified.push(SymbolChange {
@@ -185,7 +191,14 @@ fn symbol_map(db: &Database) -> BTreeMap<String, SymbolState> {
     }
     let mut out = BTreeMap::new();
     for (id, mut symbols) in groups {
-        symbols.sort_by_key(|s| (s.rva, s.vaddr, s.demangled.as_deref().unwrap_or("")));
+        symbols.sort_by_key(|s| {
+            (
+                s.rva,
+                s.vaddr,
+                s.ordinal,
+                s.demangled.as_deref().unwrap_or(""),
+            )
+        });
         for (index, symbol) in symbols.into_iter().enumerate() {
             let key = if index == 0 {
                 id.clone()
@@ -218,6 +231,7 @@ fn state(id: &str, symbol: &Symbol, image_base: u64) -> SymbolState {
                 .and_then(|v| u32::try_from(v).ok())
                 .unwrap_or(0)
         },
+        ordinal: symbol.ordinal,
         size: symbol.size,
         kind: format!("{:?}", symbol.kind),
         exported: symbol.exported,
@@ -295,6 +309,9 @@ pub fn markdown(report: &DiffReport) -> String {
             }
             if change.flags.export_status.get() {
                 flags.push("export-status");
+            }
+            if change.flags.ordinal.get() {
+                flags.push("ordinal");
             }
             if change.flags.rva.get() {
                 flags.push("rva");
@@ -400,5 +417,27 @@ mod tests {
         assert_eq!(report.summary.modified, 1);
         assert_eq!(report.summary.implementation_changes, 1);
         assert_eq!(report.summary.call_graph_changes, 1);
+    }
+
+    #[test]
+    fn detects_ordinal_and_vtable_slot_changes() {
+        let mut old_sym = symbol("IFoo::Bar", "", &[]);
+        old_sym.rva = 0;
+        old_sym.vaddr = 0;
+        old_sym.ordinal = Some(6);
+        let mut new_sym = old_sym.clone();
+        new_sym.ordinal = Some(7);
+
+        let mut old = Database::default();
+        old.binary.file = "Foo.winmd".into();
+        old.symbols = vec![old_sym];
+        let mut new = Database::default();
+        new.binary.file = "Foo.winmd".into();
+        new.symbols = vec![new_sym];
+
+        let report = compare(&old, &new);
+        assert_eq!(report.summary.modified, 1);
+        assert!(report.modified[0].flags.ordinal.get());
+        assert!(markdown(&report).contains("ordinal"));
     }
 }

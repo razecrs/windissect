@@ -112,8 +112,17 @@ func TestShallowResultDoesNotSatisfyDeepRun(t *testing.T) {
 
 	deepEntry := shallowEntry
 	deepEntry.Depth = depthFull
+	deepEntry.Semantic = filepath.Join(dir, "semantic")
+	if err := os.Mkdir(deepEntry.Semantic, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if !reusableResult(deepEntry, binary, false) {
 		t.Fatal("a deep entry should satisfy a deep run")
+	}
+
+	deepEntry.Semantic = ""
+	if reusableResult(deepEntry, binary, false) {
+		t.Fatal("a deep entry without semantic output must be retried")
 	}
 }
 
@@ -164,5 +173,40 @@ func TestGateIgnoresTargetsWithoutPDB(t *testing.T) {
 func TestGateIsSilentWithoutInventory(t *testing.T) {
 	if err := gateCompleteness(filepath.Join(t.TempDir(), "absent.json"), "x.dll"); err != nil {
 		t.Fatalf("absence of a summary failed the target: %v", err)
+	}
+}
+
+func TestSeedCorpusCoverageMakesUnattemptedTargetsVisible(t *testing.T) {
+	root := t.TempDir()
+	extractor := filepath.Join(root, "windissect.exe")
+	if err := os.WriteFile(extractor, []byte("extractor"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	targets := []targetSpec{
+		{ID: "done", File: "done.dll", Required: true},
+		{ID: "required-later", File: "required.dll", Required: true},
+		{ID: "optional-later", File: "optional.dll"},
+	}
+	if err := writeCorpusIndex(root, extractor, []corpusResult{{
+		ID: "done", File: "done.dll", Required: true, Status: "verified-pdb",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedCorpusCoverage(root, extractor, targets); err != nil {
+		t.Fatal(err)
+	}
+
+	statuses := make(map[string]string)
+	for _, result := range readCorpusIndex(root).Targets {
+		statuses[result.ID] = result.Status
+	}
+	if statuses["done"] != "verified-pdb" {
+		t.Fatalf("completed result was replaced: %q", statuses["done"])
+	}
+	if statuses["required-later"] != "pending-required" {
+		t.Fatalf("missing required target is invisible: %q", statuses["required-later"])
+	}
+	if statuses["optional-later"] != "pending-optional" {
+		t.Fatalf("missing optional target is invisible: %q", statuses["optional-later"])
 	}
 }
