@@ -186,6 +186,15 @@ fn enum_values(ty: &TypeDef<'_>) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Instance fields of a struct, in declaration order (which is the ABI layout
+/// order: `WinRT` structs are sequential with natural alignment).
+fn struct_fields(ty: &TypeDef<'_>) -> Vec<serde_json::Value> {
+    ty.fields()
+        .filter(|field| field.constant().is_none())
+        .map(|field| json!({ "name": field.name(), "type": type_name(&field.ty()) }))
+        .collect()
+}
+
 const fn category_name(category: &TypeCategory) -> &'static str {
     match category {
         TypeCategory::Interface => "interface",
@@ -339,6 +348,12 @@ fn collect_types(index: &Index) -> ExtractedTypes {
         }
         if matches!(category, TypeCategory::Enum) {
             record["values"] = json!(enum_values(&ty));
+            if let Some(storage) = ty.fields().find(|f| f.constant().is_none()) {
+                record["underlying"] = json!(type_name(&storage.ty()));
+            }
+        }
+        if matches!(category, TypeCategory::Struct) {
+            record["fields"] = json!(struct_fields(&ty));
         }
         out.classes.push(record);
         out.symbols
@@ -417,11 +432,12 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use windows_metadata::writer::{
-        AttributeType, File, HasAttribute, MemberRefParent, TypeDefOrRef, TypeOrMethodDef,
+        AttributeType, File, HasAttribute, HasConstant, MemberRefParent, TypeDefOrRef,
+        TypeOrMethodDef,
     };
     use windows_metadata::{
-        GenericParamAttributes, MethodAttributes, MethodCallAttributes, MethodImplAttributes,
-        ParamAttributes, Signature as WinmdSignature, Type, TypeAttributes,
+        FieldAttributes, GenericParamAttributes, MethodAttributes, MethodCallAttributes,
+        MethodImplAttributes, ParamAttributes, Signature as WinmdSignature, Type, TypeAttributes,
     };
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -485,6 +501,60 @@ mod tests {
         add_sample_interfaces(&mut file, extra_method);
         add_sample_delegate_and_class(&mut file);
         file.into_stream()
+    }
+
+    fn build_struct_winmd() -> Vec<u8> {
+        let mut file = File::new("Shapes.winmd");
+        let sealed =
+            TypeAttributes::Public | TypeAttributes::Sealed | TypeAttributes::WindowsRuntime;
+        let enum_base = TypeDefOrRef::TypeRef(file.TypeRef("System", "Enum"));
+        let _kind = file.TypeDef("Sample", "Kind", enum_base, sealed);
+        let _ = file.Field(
+            "value__",
+            &Type::I32,
+            FieldAttributes::Public | FieldAttributes::SpecialName | FieldAttributes::RTSpecialName,
+        );
+        let one = file.Field(
+            "One",
+            &Type::value_named("Sample", "Kind"),
+            FieldAttributes::Public | FieldAttributes::Static | FieldAttributes::Literal,
+        );
+        file.Constant(HasConstant::Field(one), &Value::I32(1));
+        let value_base = TypeDefOrRef::TypeRef(file.TypeRef("System", "ValueType"));
+        let _span = file.TypeDef("Sample", "Span", value_base, sealed);
+        let _ = file.Field("Ticks", &Type::I64, FieldAttributes::Public);
+        let _ = file.Field(
+            "Kind",
+            &Type::value_named("Sample", "Kind"),
+            FieldAttributes::Public,
+        );
+        file.into_stream()
+    }
+
+    #[test]
+    fn records_struct_fields_and_enum_storage() {
+        let root = temp_dir("structs");
+        let winmd_path = root.join("Shapes.winmd");
+        let out_path = root.join("Shapes.json");
+        fs::write(&winmd_path, build_struct_winmd()).unwrap();
+        winmd_command(&winmd_path, &out_path).unwrap();
+        let db: Database = serde_json::from_slice(&fs::read(&out_path).unwrap()).unwrap();
+        let find = |q: &str| {
+            db.classes
+                .iter()
+                .find(|c| c["qualified_name"] == q)
+                .unwrap()
+                .clone()
+        };
+        let span = find("Sample.Span");
+        assert_eq!(span["category"], "struct");
+        assert_eq!(
+            span["fields"],
+            json!([{"name": "Ticks", "type": "I64"}, {"name": "Kind", "type": "Sample.Kind"}])
+        );
+        let kind = find("Sample.Kind");
+        assert_eq!(kind["underlying"], "I32");
+        assert_eq!(kind["values"], json!([{"name": "One", "value": 1}]));
     }
 
     fn add_sample_interfaces(file: &mut File, extra_method: bool) {

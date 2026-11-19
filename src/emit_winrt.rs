@@ -10,10 +10,21 @@
 //!   `WINRT_SLOT_IFoo_<method>`  -> vtable index, `IInspectable` base included
 //! per delegate `Ns.FooHandler` (an `IUnknown` with `Invoke` at slot 3):
 //!   `WINRT_IID_FooHandler`, `WINRT_SLOT_FooHandler_Invoke`
-//! and per enum `Ns.Foo`:
+//! per enum `Ns.Foo`:
 //!   `WINRT_ENUM_Foo_<value>`    -> the enum constant
+//! and per struct `Ns.Foo`:
+//!   `winrt_Foo`                 -> a C typedef with the metadata's fields in
+//!                                  declaration order (`WinRT` structs are
+//!                                  sequential with natural alignment); a field
+//!                                  of struct type needs that struct wanted too,
+//!                                  earlier in the list.
 //! Generic definitions carry no usable IID (each instantiation has its own),
-//! so only their slots are emitted.
+//! so only their slots are emitted. A wanted instantiation such as
+//! ``Windows.Foundation.IReference`1<Double>`` gets its IID computed the way
+//! the `WinRT` runtime does: a SHA-1 name-based UUID (version 5) over the
+//! parameterized-interface namespace and the signature
+//! `pinterface({definition GUID};f8)`, emitted as `WINRT_IID_IReference_1_Double`
+//! together with the definition's slots.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
@@ -35,6 +46,8 @@ struct Interface<'a> {
     iid: Option<String>,
     members: Vec<(String, u32)>,
     values: Vec<(String, i64)>,
+    /// Struct fields as (C type, field name), in declaration order.
+    fields: Vec<(String, String)>,
     source: &'a Source,
 }
 
@@ -89,8 +102,239 @@ fn enum_from<'a>(record: &Value, source: &'a Source) -> Result<Interface<'a>> {
         iid: None,
         members: Vec::new(),
         values,
+        fields: Vec::new(),
         source,
     })
+}
+
+/// C spelling of a field type: a primitive, an enum's storage type, or a
+/// struct already emitted in this header.
+fn c_field_type(
+    ty: &str,
+    index: &HashMap<&str, (&Value, &Source)>,
+    emitted: &HashMap<String, String>,
+) -> Option<String> {
+    let primitive = match ty {
+        "Bool" | "U8" => "uint8_t",
+        "I8" => "int8_t",
+        "I16" => "int16_t",
+        "U16" | "Char" => "uint16_t",
+        "I32" => "int32_t",
+        "U32" => "uint32_t",
+        "I64" => "int64_t",
+        "U64" => "uint64_t",
+        "F32" => "float",
+        "F64" => "double",
+        "String" => "void *", /* HSTRING */
+        _ => "",
+    };
+    if !primitive.is_empty() {
+        return Some(primitive.to_string());
+    }
+    if let Some(c_name) = emitted.get(ty) {
+        return Some(c_name.clone());
+    }
+    let (record, _) = index.get(ty)?;
+    if record["category"].as_str() == Some("enum") {
+        let storage = record["underlying"].as_str().unwrap_or("I32");
+        return c_field_type(storage, index, emitted);
+    }
+    None
+}
+
+fn struct_from<'a>(
+    record: &Value,
+    source: &'a Source,
+    index: &HashMap<&str, (&Value, &Source)>,
+    emitted: &HashMap<String, String>,
+) -> Result<Interface<'a>> {
+    let qualified = record["qualified_name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let Some(raw_fields) = record["fields"].as_array() else {
+        bail!(
+            "{qualified} has no struct fields in {} (re-extract with this windissect)",
+            source.file
+        );
+    };
+    let mut fields = Vec::new();
+    for field in raw_fields {
+        let (Some(name), Some(ty)) = (field["name"].as_str(), field["type"].as_str()) else {
+            bail!("{qualified} has a malformed field in {}", source.file);
+        };
+        let Some(c_type) = c_field_type(ty, index, emitted) else {
+            bail!(
+                "{qualified}.{name} has type {ty}, which is not a primitive, an enum, or a struct wanted earlier"
+            );
+        };
+        fields.push((c_type, c_ident(name)));
+    }
+    if fields.is_empty() {
+        bail!("{qualified} has no fields in {}", source.file);
+    }
+    Ok(Interface {
+        ident: c_ident(record["name"].as_str().unwrap_or_default()),
+        qualified,
+        iid: None,
+        members: Vec::new(),
+        values: Vec::new(),
+        fields,
+        source,
+    })
+}
+
+/// SHA-1 (FIPS 180-4). Only used to derive parameterized `WinRT` IIDs.
+fn sha1(data: &[u8]) -> [u8; 20] {
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
+    let mut msg = data.to_vec();
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    msg.push(0x80);
+    while msg.len() % 64 != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+    for block in msg.as_chunks::<64>().0 {
+        let mut w = [0u32; 80];
+        for (i, word) in block.as_chunks::<4>().0.iter().enumerate() {
+            w[i] = u32::from_be_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for i in 16..80 {
+            w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
+        }
+        let [mut a, mut b, mut c, mut d, mut e] = h;
+        for (i, wi) in w.iter().enumerate() {
+            let (f, k) = match i {
+                0..=19 => ((b & c) | (!b & d), 0x5A82_7999),
+                20..=39 => (b ^ c ^ d, 0x6ED9_EBA1),
+                40..=59 => ((b & c) | (b & d) | (c & d), 0x8F1B_BCDC),
+                _ => (b ^ c ^ d, 0xCA62_C1D6),
+            };
+            let t = a
+                .rotate_left(5)
+                .wrapping_add(f)
+                .wrapping_add(e)
+                .wrapping_add(k)
+                .wrapping_add(*wi);
+            e = d;
+            d = c;
+            c = b.rotate_left(30);
+            b = a;
+            a = t;
+        }
+        for (slot, v) in h.iter_mut().zip([a, b, c, d, e]) {
+            *slot = slot.wrapping_add(v);
+        }
+    }
+    let mut out = [0u8; 20];
+    for (i, v) in h.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_be_bytes());
+    }
+    out
+}
+
+/// Signature element of a primitive generic argument (`WinRT` type system).
+fn primitive_signature(arg: &str) -> Option<&'static str> {
+    Some(match arg {
+        "Boolean" => "b1",
+        "Char16" => "c2",
+        "Int8" => "i1",
+        "UInt8" => "u1",
+        "Int16" => "i2",
+        "UInt16" => "u2",
+        "Int32" => "i4",
+        "UInt32" => "u4",
+        "Int64" => "i8",
+        "UInt64" => "u8",
+        "Single" => "f4",
+        "Double" => "f8",
+        "String" => "string",
+        "Guid" => "g16",
+        "Object" => "cinterface(IInspectable)",
+        _ => return None,
+    })
+}
+
+/// Canonical IID text of a parameterized interface instance.
+fn pinterface_iid(definition_iid: &str, args: &[&str]) -> Result<String> {
+    // Namespace of every pinterface IID: 11f47ad5-7b73-42c0-abae-878b1e16adee.
+    const NAMESPACE: [u8; 16] = [
+        0x11, 0xf4, 0x7a, 0xd5, 0x7b, 0x73, 0x42, 0xc0, 0xab, 0xae, 0x87, 0x8b, 0x1e, 0x16, 0xad,
+        0xee,
+    ];
+    let mut signature = format!("pinterface({{{}}}", definition_iid.to_ascii_lowercase());
+    for arg in args {
+        let Some(element) = primitive_signature(arg) else {
+            bail!("generic argument {arg} is not a primitive emit-winrt can sign");
+        };
+        signature.push(';');
+        signature.push_str(element);
+    }
+    signature.push(')');
+    let mut input = NAMESPACE.to_vec();
+    input.extend_from_slice(signature.as_bytes());
+    let mut b = [0u8; 16];
+    b.copy_from_slice(&sha1(&input)[..16]);
+    b[6] = (b[6] & 0x0f) | 0x50;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    Ok(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        b[0],
+        b[1],
+        b[2],
+        b[3],
+        b[4],
+        b[5],
+        b[6],
+        b[7],
+        b[8],
+        b[9],
+        b[10],
+        b[11],
+        b[12],
+        b[13],
+        b[14],
+        b[15]
+    ))
+}
+
+/// ``Ns.IFoo`1<Double>`` -> the definition ``Ns.IFoo`1`` and its arguments.
+fn split_instance(want: &str) -> Option<(&str, Vec<&str>)> {
+    let open = want.find('<')?;
+    let inner = want.strip_suffix('>')?.get(open + 1..)?;
+    Some((&want[..open], inner.split(',').map(str::trim).collect()))
+}
+
+fn instance_from<'a>(
+    record: &Value,
+    source: &'a Source,
+    want: &str,
+    args: &[&str],
+) -> Result<Interface<'a>> {
+    let mut iface = interface_from(record, source)?;
+    let Some(seed) = record["iid"].as_str() else {
+        bail!(
+            "{want}: the generic definition has no GuidAttribute in {}",
+            source.file
+        );
+    };
+    iface.iid = Some(pinterface_iid(seed, args)?);
+    iface.ident = format!(
+        "{}_{}",
+        iface.ident,
+        args.iter()
+            .map(|a| c_ident(a))
+            .collect::<Vec<_>>()
+            .join("_")
+    );
+    iface.qualified = want.to_string();
+    Ok(iface)
 }
 
 fn interface_from<'a>(record: &Value, source: &'a Source) -> Result<Interface<'a>> {
@@ -142,6 +386,7 @@ fn interface_from<'a>(record: &Value, source: &'a Source) -> Result<Interface<'a
         iid,
         members,
         values: Vec::new(),
+        fields: Vec::new(),
         source,
     })
 }
@@ -164,7 +409,7 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
         for record in &db.classes {
             if !matches!(
                 record["category"].as_str(),
-                Some("interface" | "delegate" | "enum")
+                Some("interface" | "delegate" | "enum" | "struct")
             ) {
                 continue;
             }
@@ -176,11 +421,29 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
 
     let mut chosen = Vec::new();
     let mut idents: BTreeMap<String, String> = BTreeMap::new();
+    let mut emitted_structs: HashMap<String, String> = HashMap::new();
     for want in wanted {
-        let Some((record, source)) = index.get(want.as_str()) else {
-            bail!("{want} is not an interface, delegate or enum in the supplied winmd evidence");
+        // A generic instantiation is looked up by its definition.
+        let instance = split_instance(want).and_then(|(definition, args)| {
+            index
+                .get(definition)
+                .map(|(record, source)| (*record, *source, args))
+        });
+        let lookup = split_instance(want).map_or(want.as_str(), |(definition, _)| definition);
+        let Some((record, source)) = index.get(lookup) else {
+            bail!(
+                "{want} is not an interface, delegate, enum or struct in the supplied winmd evidence"
+            );
         };
-        let iface = interface_from(record, source)?;
+        let iface = if let Some((args_record, args_source, args)) = instance.as_ref() {
+            instance_from(args_record, args_source, want, args)?
+        } else if record["category"].as_str() == Some("struct") {
+            let s = struct_from(record, source, &index, &emitted_structs)?;
+            emitted_structs.insert(s.qualified.clone(), format!("winrt_{}", s.ident));
+            s
+        } else {
+            interface_from(record, source)?
+        };
         if let Some(previous) = idents.insert(iface.ident.clone(), iface.qualified.clone()) {
             if previous != iface.qualified {
                 bail!(
@@ -207,7 +470,7 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
     }
     let _ = writeln!(
         h,
-        "*/\n#ifndef {guard}\n#define {guard}\n\n#include <guiddef.h>\n"
+        "*/\n#ifndef {guard}\n#define {guard}\n\n#include <guiddef.h>\n#include <stdint.h>\n"
     );
     for iface in &chosen {
         let _ = writeln!(h, "/* {} ({}) */", iface.qualified, iface.source.file);
@@ -217,6 +480,13 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
         }
         for (method, slot) in &iface.members {
             let _ = writeln!(h, "#define WINRT_SLOT_{}_{method} {slot}", iface.ident);
+        }
+        if !iface.fields.is_empty() {
+            let _ = writeln!(h, "typedef struct winrt_{} {{", iface.ident);
+            for (c_type, field) in &iface.fields {
+                let _ = writeln!(h, "    {c_type} {field};");
+            }
+            let _ = writeln!(h, "}} winrt_{};", iface.ident);
         }
         for (value_name, value) in &iface.values {
             let _ = writeln!(
@@ -348,6 +618,70 @@ mod tests {
         assert!(h.contains("#define WINRT_SLOT_ThingHandler_Invoke 3"));
         assert!(!h.contains("ctor"));
         assert!(emit_winrt(&dbs, &["Sample.BadHandler".into()], "bad", &out).is_err());
+    }
+
+    #[test]
+    fn sha1_matches_the_fips_vector() {
+        let digest = sha1(b"abc");
+        assert_eq!(
+            crate::hex::lower(&digest),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+    }
+
+    #[test]
+    fn computes_parameterized_iids_like_the_runtime() {
+        // IReference`1's GuidAttribute, and the IID the runtime QIs for IReference<Double>.
+        let iid = pinterface_iid("61c17706-2d65-11e0-9ae8-d48564015472", &["Double"]).unwrap();
+        assert_eq!(iid, "2f2d6c29-5473-5f3e-92e7-96572bb990e2");
+        assert!(pinterface_iid("61c17706-2d65-11e0-9ae8-d48564015472", &["Sample.Thing"]).is_err());
+
+        let db = db_with(vec![iface(
+            "IBox`1",
+            Some("61c17706-2d65-11e0-9ae8-d48564015472"),
+            &json!([{"name": "get_Value", "slot": 6}]),
+        )]);
+        let out = temp_dir("pinterface");
+        emit_winrt(&[db], &["Sample.IBox`1<Double>".into()], "p", &out).unwrap();
+        let h = std::fs::read_to_string(out.join("p_winrt.h")).unwrap();
+        assert!(
+            h.contains("#define WINRT_IID_IBox_1_Double (&(const GUID){0x2f2d6c29, 0x5473, 0x5f3e")
+        );
+        assert!(h.contains("#define WINRT_SLOT_IBox_1_Double_get_Value 6"));
+    }
+
+    #[test]
+    fn emits_structs_in_order_with_enum_storage() {
+        let db = db_with(vec![
+            json!({"name": "Kind", "qualified_name": "Sample.Kind", "category": "enum",
+                   "underlying": "I32", "values": [{"name": "One", "value": 1}]}),
+            json!({"name": "Ticks", "qualified_name": "Sample.Ticks", "category": "struct",
+                   "fields": [{"name": "Duration", "type": "I64"}]}),
+            json!({"name": "Span", "qualified_name": "Sample.Span", "category": "struct",
+                   "fields": [{"name": "Length", "type": "Sample.Ticks"},
+                              {"name": "Kind", "type": "Sample.Kind"},
+                              {"name": "Scale", "type": "F32"}]}),
+            json!({"name": "Odd", "qualified_name": "Sample.Odd", "category": "struct",
+                   "fields": [{"name": "Thing", "type": "Sample.IThing"}]}),
+        ]);
+        let out = temp_dir("structs");
+        let dbs = [db];
+        emit_winrt(
+            &dbs,
+            &["Sample.Ticks".into(), "Sample.Span".into()],
+            "st",
+            &out,
+        )
+        .unwrap();
+        let h = std::fs::read_to_string(out.join("st_winrt.h")).unwrap();
+        assert!(h.contains("#include <stdint.h>"));
+        assert!(h.contains("typedef struct winrt_Ticks {\n    int64_t Duration;\n} winrt_Ticks;"));
+        assert!(h.contains(
+            "typedef struct winrt_Span {\n    winrt_Ticks Length;\n    int32_t Kind;\n    float Scale;\n} winrt_Span;"
+        ));
+        // A nested struct must be wanted first; an interface-typed field is refused.
+        assert!(emit_winrt(&dbs, &["Sample.Span".into()], "late", &out).is_err());
+        assert!(emit_winrt(&dbs, &["Sample.Odd".into()], "odd", &out).is_err());
     }
 
     #[test]
