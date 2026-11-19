@@ -48,6 +48,7 @@ pub fn run_profile(db: &Database, profile: Option<&str>) -> bool {
     check_member_offsets(db, &mut r);
     check_vftables(db, &mut r);
     check_symbols(db, &mut r);
+    check_electron(db, &mut r);
     if profile == Some("dui70") {
         check_dui70(db, &mut r);
     }
@@ -396,7 +397,8 @@ fn check_symbols(db: &Database, r: &mut Report) {
             .get("status")
             .and_then(serde_json::Value::as_str)
             .is_some_and(|status| {
-                status == "unavailable-no-pdb" || (status == "recovered" && !db.classes.is_empty())
+                status == "unavailable-no-pdb"
+                    || (status == "recovered" && (!db.classes.is_empty() || db.electron.is_some()))
             })
         && (db.binary.sha256.is_some() || db.binary.pdb_guid.is_some());
     r.check(
@@ -431,6 +433,7 @@ fn check_symbols(db: &Database, r: &mut Report) {
                 && s.vaddr == 0
                 && s.forwarder.is_none()
                 && s.provenance != crate::model::Provenance::Reflection
+                && s.provenance != crate::model::Provenance::Electron
         })
         .count();
     r.check(
@@ -463,6 +466,42 @@ fn check_symbols(db: &Database, r: &mut Report) {
         "no structured sig without a method (no fabrication)",
         fabricated == 0,
         format!("{fabricated}"),
+    );
+}
+
+fn check_electron(db: &Database, r: &mut Report) {
+    let Some(app) = &db.electron else {
+        return;
+    };
+    let is_sha256 = |s: &str| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit());
+    let bad_archives = app
+        .archives
+        .iter()
+        .filter(|a| !is_sha256(&a.sha256) || !a.integrity_mismatches.is_empty())
+        .count();
+    let bad_loaders = app
+        .loaders
+        .iter()
+        .filter(|l| {
+            !is_sha256(&l.sha256)
+                || (l.formatting.valid_utf8
+                    && l.exact_text
+                        .as_ref()
+                        .is_some_and(|t| u64::try_from(t.len()).ok() != Some(l.byte_len)))
+        })
+        .count();
+    r.check(
+        "electron archive and loader shapes are consistent",
+        bad_archives == 0 && bad_loaders == 0,
+        format!(
+            "{} archives ({} bad), {} loaders ({} bad), {} APIs, {} IPC channels",
+            app.archives.len(),
+            bad_archives,
+            app.loaders.len(),
+            bad_loaders,
+            app.electron_apis.len(),
+            app.ipc_channels.len(),
+        ),
     );
 }
 

@@ -74,6 +74,8 @@ flowchart LR
 | `demangle.rs`, `typeparse.rs` | MSVC demangling and type parsing |
 | `enrich.rs` | Function boundaries, instructions, hashes, calls, thunks, imports |
 | `rtti.rs`, `layoutinfer.rs`, `reflection.rs` | Vftables, member observations, reflection metadata |
+| `winmd.rs`, `emit_winrt.rs` | ECMA-335 `.winmd` metadata extraction and `WinRT` C headers |
+| `asar.rs`, `electron_js.rs`, `electron.rs` | Electron `.asar` parsing, loader exact shape, API & IPC channel recovery |
 | `model.rs` | IR: evidence, claims, proofs, conflicts, symbols, types, semantic facts |
 | `verify.rs` | Graph and identity invariants, optional target profiles |
 | `emit.rs`, `emit_rust.rs`, `emit_syms.rs` | C/C++ headers, call helpers, Rust, C symbol tables |
@@ -92,6 +94,8 @@ flowchart LR
 | Command | What it does |
 |---|---|
 | `extract` | Build the IR from a PE and optional PDB |
+| `winmd`, `emit-winrt` | Extract `.winmd` `WinRT` metadata and emit C IID/vtable headers |
+| `electron` | Inspect Electron apps (`.asar`, loader `index.js`, version, APIs, IPC channels) |
 | `pgressive` | Inventory every PE/PDB category, including ones not yet modeled |
 | `verify` | Check IR invariants, optionally with a target profile (`--profile dui70`) |
 | `classes` | List classes by member count |

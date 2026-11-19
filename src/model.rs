@@ -19,6 +19,7 @@ pub enum Provenance {
     Demangler,
     R2Infer,
     Reflection,
+    Electron,
     Human,
 }
 
@@ -736,6 +737,10 @@ pub struct Database {
     /// address/size when the PDB exposes them.
     #[serde(default)]
     pub pdb_records: Vec<serde_json::Value>,
+    /// Electron application analysis: runtime version, `.asar` archives, loader
+    /// exact shapes, Electron APIs, and IPC channels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub electron: Option<crate::electron::ElectronApp>,
 }
 
 impl Database {

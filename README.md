@@ -150,6 +150,18 @@ For quick binary exploration, string search does not require a PDB or IR:
 Results include the file offset, encoding, and an RVA whenever the offset maps
 into a PE image section.
 
+For Electron desktop applications (`.asar` archives, loader `index.js`, host
+binaries, or unpacked app directories):
+
+```powershell
+& $wd electron path\to\app --out ir\electron.json
+& $wd verify --ir ir\electron.json
+```
+
+This records the Electron and Chromium runtime versions, archive header/SHA-256
+integrity metadata, every loader's exact verbatim shape, the Electron APIs
+relied on, `contextBridge` globals, and IPC channels.
+
 `emit-headers` writes `<target>.h` with verified ABI metadata and proven call
 helpers only. Everything else Windissect reconstructed goes into
 `<target>_candidates.h`, which is opt-in and not ABI-safe.

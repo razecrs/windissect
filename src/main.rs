@@ -1,11 +1,14 @@
 //! Windissect: target-independent Windows PE/PDB dissection pipeline.
 
 mod archive;
+mod asar;
 mod decompile;
 mod demangle;
 mod descent;
 mod diff;
 mod docs;
+mod electron;
+mod electron_js;
 mod emit;
 mod emit_asm;
 mod emit_evidence;
@@ -119,6 +122,8 @@ enum Cmd {
         #[arg(short, long, default_value = "ir/winmd.json")]
         out: PathBuf,
     },
+    /// Extract Electron app metadata, .asar archives, loader index.js shape, APIs, and IPC channels.
+    Electron(ElectronArgs),
     /// Build a module dependency graph from a set of IR databases.
     Deps {
         /// IR files, or directories containing them.
@@ -293,6 +298,17 @@ enum Cmd {
 }
 
 #[derive(Args)]
+struct ElectronArgs {
+    /// Path to an Electron app directory, executable, .asar archive, or loader index.js.
+    target: PathBuf,
+    #[arg(short, long, default_value = "ir/electron.json")]
+    out: PathBuf,
+    /// Optional directory to unpack discovered .asar archives and loaders into.
+    #[arg(long)]
+    unpack: Option<PathBuf>,
+}
+
+#[derive(Args)]
 struct StringsArgs {
     /// Binary file to scan.
     binary: PathBuf,
@@ -415,6 +431,9 @@ fn dispatch(command: Cmd) -> Result<()> {
         Cmd::EmitEvidence { out, ir } => emit_evidence_command(&ir, &out),
         Cmd::EmitAsm { out, ir } => emit_asm_command(&ir, &out),
         Cmd::Winmd { winmd: path, out } => winmd::winmd_command(&path, &out),
+        Cmd::Electron(args) => {
+            electron::electron_command(&args.target, &args.out, args.unpack.as_deref())
+        }
         Cmd::Deps { ir, out, recursive } => archive::deps_command(&ir, out.as_deref(), recursive),
         Cmd::Symbols {
             files,
