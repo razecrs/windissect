@@ -8,6 +8,8 @@
 //! Output, per interface `Ns.IFoo` (generic ``IFoo`1`` becomes `IFoo_1`):
 //!   `WINRT_IID_IFoo`            -> `const GUID *` (compound literal)
 //!   `WINRT_SLOT_IFoo_<method>`  -> vtable index, `IInspectable` base included
+//! per delegate `Ns.FooHandler` (an `IUnknown` with `Invoke` at slot 3):
+//!   `WINRT_IID_FooHandler`, `WINRT_SLOT_FooHandler_Invoke`
 //! and per enum `Ns.Foo`:
 //!   `WINRT_ENUM_Foo_<value>`    -> the enum constant
 //! Generic definitions carry no usable IID (each instantiation has its own),
@@ -111,10 +113,15 @@ fn interface_from<'a>(record: &Value, source: &'a Source) -> Result<Interface<'a
         bail!("{qualified} has no GuidAttribute IID in {}", source.file);
     }
 
+    let delegate = record["category"].as_str() == Some("delegate");
     let mut seen: HashMap<String, u32> = HashMap::new();
     let mut members = Vec::new();
     for member in record["members"].as_array().into_iter().flatten() {
         let method = member["name"].as_str().unwrap_or_default();
+        // A delegate's metadata constructor is not part of its ABI vtable.
+        if delegate && method == ".ctor" {
+            continue;
+        }
         let Some(slot) = member["slot"].as_u64().and_then(|s| u32::try_from(s).ok()) else {
             bail!("{qualified}.{method} has no vtable slot in {}", source.file);
         };
@@ -155,7 +162,10 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
     let mut index: HashMap<&str, (&Value, &Source)> = HashMap::new();
     for (db, source) in dbs.iter().zip(&sources) {
         for record in &db.classes {
-            if !matches!(record["category"].as_str(), Some("interface" | "enum")) {
+            if !matches!(
+                record["category"].as_str(),
+                Some("interface" | "delegate" | "enum")
+            ) {
                 continue;
             }
             if let Some(q) = record["qualified_name"].as_str() {
@@ -168,7 +178,7 @@ pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Pat
     let mut idents: BTreeMap<String, String> = BTreeMap::new();
     for want in wanted {
         let Some((record, source)) = index.get(want.as_str()) else {
-            bail!("{want} is not an interface or enum in the supplied winmd evidence");
+            bail!("{want} is not an interface, delegate or enum in the supplied winmd evidence");
         };
         let iface = interface_from(record, source)?;
         if let Some(previous) = idents.insert(iface.ident.clone(), iface.qualified.clone()) {
@@ -313,6 +323,31 @@ mod tests {
         assert!(h.contains("#define WINRT_ENUM_Side_Bottom (-2)"));
         assert!(emit_winrt(&dbs, &["Sample.Empty".into()], "empty", &out).is_err());
         assert!(h.contains("Sample.winmd sha256 abab"));
+    }
+
+    #[test]
+    fn emits_delegate_iid_and_invoke_slot() {
+        let mut handler = iface(
+            "ThingHandler",
+            Some("1115b13c-25d2-480b-89dc-eb3dcbd6b7fa"),
+            &json!([
+                {"name": ".ctor", "params": ["object", "method"]},
+                {"name": "Invoke", "params": ["sender", "e"], "slot": 3}
+            ]),
+        );
+        handler["category"] = json!("delegate");
+        let mut slotless = handler.clone();
+        slotless["name"] = json!("BadHandler");
+        slotless["qualified_name"] = json!("Sample.BadHandler");
+        slotless["members"] = json!([{"name": "Invoke"}]);
+        let out = temp_dir("delegate");
+        let dbs = [db_with(vec![handler, slotless])];
+        emit_winrt(&dbs, &["Sample.ThingHandler".into()], "d", &out).unwrap();
+        let h = std::fs::read_to_string(out.join("d_winrt.h")).unwrap();
+        assert!(h.contains("#define WINRT_IID_ThingHandler (&(const GUID){0x1115b13c"));
+        assert!(h.contains("#define WINRT_SLOT_ThingHandler_Invoke 3"));
+        assert!(!h.contains("ctor"));
+        assert!(emit_winrt(&dbs, &["Sample.BadHandler".into()], "bad", &out).is_err());
     }
 
     #[test]
