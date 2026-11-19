@@ -27,6 +27,7 @@ mod oracle;
 mod pdbsym;
 mod pdbtype;
 mod pgressive;
+mod prove_member_call;
 mod recovery_plan;
 mod refine;
 mod reflection;
@@ -198,6 +199,20 @@ enum Cmd {
         /// PE image base for RVA math (verified against the binary).
         #[arg(long)]
         base: Option<u64>,
+    },
+    /// Prove `this`-member interface calls (member offset + vtable slot) from
+    /// the canonical instruction IR and emit them as a build-pinned C header.
+    ProveMemberCall {
+        #[arg(short, long, default_value = "proofs")]
+        out: PathBuf,
+        #[arg(long)]
+        ir: PathBuf,
+        /// NAME=MANGLED_INSTANCE_METHOD, repeatable.
+        #[arg(long, required = true)]
+        want: Vec<String>,
+        /// Header stem: writes <name>_proofs.h and <name>_proofs.json.
+        #[arg(long, default_value = "member")]
+        name: String,
     },
     /// Emit a C header of `WinRT` IIDs and vtable slots from winmd IR.
     EmitWinrt {
@@ -428,6 +443,12 @@ fn dispatch(command: Cmd) -> Result<()> {
             want,
             name,
         } => emit_winrt_command(&ir, &want, &name, &out),
+        Cmd::ProveMemberCall {
+            out,
+            ir,
+            want,
+            name,
+        } => prove_member_call::emit(&load_ir(&ir)?, &want, &name, &out),
         Cmd::EmitEvidence { out, ir } => emit_evidence_command(&ir, &out),
         Cmd::EmitAsm { out, ir } => emit_asm_command(&ir, &out),
         Cmd::Winmd { winmd: path, out } => winmd::winmd_command(&path, &out),
