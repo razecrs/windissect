@@ -33,3 +33,6 @@
 /recon-go/ir/
 /recon-go/history/
 /recon-go/semantic/
+
+# Release build output (attach to GitHub releases instead)
+/dist/

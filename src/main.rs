@@ -51,7 +51,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(about = "Dissect Windows PE binaries and matching PDBs into trustworthy IR and bindings")]
+#[command(version, about = "Dissect Windows PE binaries and matching PDBs into trustworthy IR and bindings")]
 struct Cli {
     /// Relaunch the interactive TUI with administrator rights.
     #[arg(long, global = true)]
