@@ -33,9 +33,11 @@ type caseFile struct {
 	Cases  []moderationCase `json:"cases"`
 }
 
-// caseRetention matches the privacy policy: everything the bots keep is
-// deleted after at most 20 days. Case numbers keep counting regardless.
-const caseRetention = 20 * 24 * time.Hour
+// caseRetention is the moderation-record period stated in the privacy policy:
+// one year, so moderators can see repeat behaviour and why someone was
+// banned. Everything else the bots keep is deleted after 20 days. Case
+// numbers keep counting regardless.
+const caseRetention = 365 * 24 * time.Hour
 
 type caseStore struct {
 	mu   sync.Mutex
