@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <g id="p"><rect x="62" y="62" width="60" height="60" rx="6"/><rect x="134" y="62" width="60" height="60" rx="6"/><rect x="62" y="134" width="60" height="60" rx="6"/><rect x="134" y="134" width="60" height="60" rx="6"/></g>
+    <clipPath id="l"><polygon points="0,0 158,0 84,256 0,256"/></clipPath>
+    <clipPath id="r"><polygon points="164,0 256,0 256,256 112,256"/></clipPath>
+    <filter id="s" x="0" y="0" width="1" height="1"><feMorphology operator="erode" radius="8"/></filter>
+    <mask id="o" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <g clip-path="url(#r)" fill="#fff"><use href="#p"/></g>
+      <g filter="url(#s)"><g clip-path="url(#r)" fill="#000"><use href="#p"/></g></g>
+    </mask>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#1b2130"/>
+  <g fill="#c9d6f2"><g clip-path="url(#l)"><use href="#p"/></g><g clip-path="url(#r)" transform="translate(4,16)"><use href="#p"/></g></g>
+</svg>

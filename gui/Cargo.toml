@@ -1,0 +1,18 @@
+[package]
+name = "windissect-gui"
+version = "1.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Desktop front end for the Windissect CLI"
+
+[[bin]]
+name = "windissect-gui"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = "0.7"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+# Already in the tree through gpui; carries streamed output to the window.
+async-channel = "2.5.0"
+anyhow = "1.0.104"
