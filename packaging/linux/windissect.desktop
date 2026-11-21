@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Version=1.5
+Version=1.4
 Name=Windissect
 GenericName=Binary Analysis Workbench
 Comment=Turn Windows binaries and their PDBs into verified IR, headers and bindings
