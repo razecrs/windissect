@@ -23,3 +23,20 @@ Plain C exports with no PDB type info, like `InitProcessPriv` and
 `InitThread`, can't be proven either, since nothing Windissect collects today
 describes their arguments. Recovering argument counts from disassembly would
 give them an evidence route.
+
+## Padding hides import stubs and inflates function sizes
+
+`realloc` in `cfgbkend.dll` (RVA `0x1DAF`) is reported as a 12-byte
+`c-func`, but it is a 6-byte `jmp [rip+…]` through the import table to
+`msvcrt.dll!realloc`, followed by 6 bytes of `int3` padding. Two things
+follow from that:
+
+- Sizes come from the PDB or the next symbol, so trailing `int3`/`nop`
+  padding is counted as code. Reporting code bytes and padding bytes
+  separately (here 6 + 6) would make sizes honest.
+- A symbol only becomes a `thunk` when it decodes to exactly one `jmp`.
+  The padding decodes as extra instructions, so stubs like this stay
+  plain functions. Ignoring trailing padding after an unconditional
+  jump or return, and recording the jump target (an import or another
+  symbol), would classify them correctly and let the inspector show
+  "import stub → msvcrt.dll!realloc".
