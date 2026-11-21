@@ -10,8 +10,9 @@
 ![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-5b84f7)
 ![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-2f4fc0)
 ![Rust](https://img.shields.io/badge/built%20with-Rust-2f4fc0)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/wveT8zFCus)
 
-[Desktop app](#desktop-app) · [Quick start](#quick-start) · [ReWindows corpus](#rewindows) · [Docs](#documentation)
+[Download](https://github.com/razecrs/windissect/releases/latest) · [Desktop app](#desktop-app) · [Quick start](#quick-start) · [ReWindows corpus](#rewindows) · [Docs](#documentation) · [Discord](https://discord.gg/wveT8zFCus)
 
 </div>
 
