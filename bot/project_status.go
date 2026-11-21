@@ -192,9 +192,12 @@ func markdownHeadings(md string) []string {
 	return out
 }
 
-var semverPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
+// Matches 1, 1.0 or 1.0.0, optionally after a "v" (v1.0.0), but not digits
+// glued to letters or other digits, so "x64" or "build22631" don't count.
+var semverPattern = regexp.MustCompile(`(?i)(?:^|[^0-9a-z.])v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:$|[^0-9a-z.])`)
 
-// parseVersion finds x.y.z anywhere in text such as "windissect 1.0.0" or "v1.0.0".
+// parseVersion finds a version anywhere in text such as "windissect 1.0.0",
+// "v1.0" or "1". Missing minor and patch parts count as 0.
 func parseVersion(text string) ([3]int, bool) {
 	m := semverPattern.FindStringSubmatch(text)
 	if m == nil {
@@ -202,7 +205,9 @@ func parseVersion(text string) ([3]int, bool) {
 	}
 	var v [3]int
 	for k := range v {
-		v[k], _ = strconv.Atoi(m[k+1])
+		if m[k+1] != "" {
+			v[k], _ = strconv.Atoi(m[k+1])
+		}
 	}
 	return v, true
 }
@@ -225,11 +230,13 @@ func versionEmbed(rel githubRelease, yours string) *starlings.Embed {
 	latest, _ := parseVersion(rel.TagName)
 	embed := card("Windissect "+versionString(latest), "").SetURL(rel.HTMLURL)
 
-	switch mine, ok := parseVersion(yours); {
-	case strings.TrimSpace(yours) == "":
-		embed.SetDescription("This is the latest release. Run `windissect --version` and pass it as `yours` to check your copy.")
+	const howTo = "To check your copy, run `windissect --version` in a terminal (or open About in the app) and pass the number it prints as `yours`, e.g. `/version yours:1.0.0`."
+	given := strings.TrimSpace(yours)
+	switch mine, ok := parseVersion(given); {
+	case given == "":
+		embed.SetDescription("This is the latest release.\n" + howTo)
 	case !ok:
-		embed.SetDescription(fmt.Sprintf("I couldn't find a version like `1.0.0` in `%s`. Try the output of `windissect --version`.", strings.TrimSpace(yours)))
+		embed.SetDescription(fmt.Sprintf("I got `%s`, which has no version number in it.\n%s", clip(given, 64), howTo))
 	case compareVersions(mine, latest) < 0:
 		embed.SetDescription(fmt.Sprintf("**Update available:** you have %s, the latest is %s. Grab it below.", versionString(mine), versionString(latest)))
 	case compareVersions(mine, latest) == 0:
