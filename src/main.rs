@@ -389,6 +389,14 @@ fn main() -> Result<()> {
         if cli.elevate && !is_elevated() {
             return request_elevated_tui();
         }
+        // Ignoring the flag here used to launch an unprivileged TUI that the
+        // user had asked to be privileged.
+        #[cfg(not(windows))]
+        anyhow::ensure!(
+            !cli.elevate,
+            "--elevate uses the Windows UAC prompt and does nothing on this platform; \
+             run `sudo windissect` instead if the TUI needs root"
+        );
         return launch_tui();
     };
     dispatch(command)

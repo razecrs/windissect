@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {join} from 'node:path';
 import {buildInvocation, displayCommand, missingRequiredFields, workflows} from '../src/commands.js';
 
 test('extract keeps paths as separate process arguments', () => {
@@ -55,6 +56,18 @@ test('diff emits both requested report paths', () => {
 test('required field validation uses workflow schema', () => {
   const extract = workflows.find(workflow => workflow.id === 'extract')!;
   assert.deepEqual(missingRequiredFields(extract, {dll: '', pdb: '', out: 'out.json'}).map(x => x.key), ['dll']);
+});
+
+test('default paths use the host separator', () => {
+  for (const workflow of workflows) {
+    for (const field of workflow.fields) {
+      if (field.initial && process.platform !== 'win32') {
+        assert.ok(!field.initial.includes('\\'), `${workflow.id}.${field.key} = ${field.initial}`);
+      }
+    }
+  }
+  const verify = workflows.find(workflow => workflow.id === 'verify')!;
+  assert.equal(verify.fields[0].initial, join('ir', 'symbols.json'));
 });
 
 test('display command quotes only its presentation', () => {

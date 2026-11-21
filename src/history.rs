@@ -51,7 +51,7 @@ pub struct RecordResult {
 }
 
 pub fn record(db: &Database, root: &Path, source_ir: Option<&Path>) -> Result<RecordResult> {
-    let target = target_stem(&db.binary.file);
+    let target = existing_target_dir(root, target_stem(&db.binary.file));
     let key = build_key(db);
     let target_dir = root.join(&target);
     let build_dir = target_dir.join("builds").join(&key);
@@ -187,6 +187,37 @@ fn target_stem(file: &str) -> String {
     safe(name)
 }
 
+/// The archive directory for a target, reusing one that differs only in case.
+///
+/// The directory is named after the binary's file name, and Windows spells
+/// that file however it was asked for: a module pulled as `uDWM.dll` and the
+/// installed `udwm.dll` are one target. On Windows they share a directory
+/// because the filesystem says so; on Linux they split the history in two,
+/// each half diffing against the wrong previous build.
+///
+/// The on-disk spelling wins on every platform, so the catalog names the
+/// directory that is actually there; an exact match is preferred if an archive
+/// already holds several spellings.
+fn existing_target_dir(root: &Path, target: String) -> String {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return target;
+    };
+    let mut folded = None;
+    for name in entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| entry.file_name().into_string().ok())
+    {
+        if name == target {
+            return target;
+        }
+        if folded.is_none() && name.eq_ignore_ascii_case(&target) {
+            folded = Some(name);
+        }
+    }
+    folded.unwrap_or(target)
+}
+
 fn safe(value: &str) -> String {
     value
         .chars()
@@ -267,6 +298,30 @@ mod tests {
         let catalog: HistoryCatalog =
             serde_json::from_slice(&std::fs::read(root.join("index.json")).unwrap()).unwrap();
         assert_eq!(catalog.targets[0].target, "history-test");
+        assert_eq!(catalog.targets[0].build_count, 2);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn differently_cased_file_names_share_one_history() {
+        let root =
+            std::env::temp_dir().join(format!("windissect-history-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        record(&database("1", "aaa"), &root, None).unwrap();
+        let mut renamed = database("2", "bbb");
+        renamed.binary.file = "History-Test.DLL".into();
+        let second = record(&renamed, &root, None).unwrap();
+        assert_eq!(second.target, "history-test");
+        assert!(second.previous.is_some(), "the second build did not see the first");
+        let dirs = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.path().is_dir())
+            .count();
+        assert_eq!(dirs, 1);
+        let catalog: HistoryCatalog =
+            serde_json::from_slice(&std::fs::read(root.join("index.json")).unwrap()).unwrap();
+        assert_eq!(catalog.targets.len(), 1);
         assert_eq!(catalog.targets[0].build_count, 2);
         std::fs::remove_dir_all(root).unwrap();
     }

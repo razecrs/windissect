@@ -1,3 +1,13 @@
+import {join} from 'node:path';
+
+// Defaults and hints are paths the user accepts as typed, so they use this
+// host's separator: 'ir\\symbols.json' on Linux is a file of that name in the
+// current directory, not symbols.json inside ir/.
+const sampleDll = process.platform === 'win32'
+  ? 'C:\\Windows\\System32\\dwmapi.dll'
+  : 'path/to/dwmapi.dll (copied from Windows)';
+const symbolsIr = join('ir', 'symbols.json');
+
 export type WorkflowId =
   | 'browse'
   | 'decompile'
@@ -42,7 +52,7 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Inspect recovered functions, evidence, calls and assembly.',
     accent: 'magenta',
     fields: [
-      {key: 'ir', label: 'IR database', hint: 'windissect-work\\challenge\\ir.json'},
+      {key: 'ir', label: 'IR database', hint: join('windissect-work', 'challenge', 'ir.json')},
       {key: 'binary', label: 'Original binary', hint: 'Needed for per-function C generation', optional: true},
     ],
   },
@@ -54,7 +64,7 @@ export const workflows: WorkflowDefinition[] = [
     fields: [
       {key: 'binary', label: 'PE binary', hint: 'challenge.exe'},
       {key: 'pdb', label: 'Matching PDB', hint: 'Optional', optional: true},
-      {key: 'out', label: 'Workspace', hint: 'windissect-work\\challenge', optional: true},
+      {key: 'out', label: 'Workspace', hint: join('windissect-work', 'challenge'), optional: true},
     ],
   },
   {
@@ -98,9 +108,9 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Build IR from a PE, optionally anchored by its matching PDB.',
     accent: 'cyan',
     fields: [
-      {key: 'dll', label: 'PE binary', hint: 'C:\\Windows\\System32\\dwmapi.dll'},
+      {key: 'dll', label: 'PE binary', hint: sampleDll},
       {key: 'pdb', label: 'Matching PDB', hint: 'Leave blank for PE-only recovery', optional: true},
-      {key: 'out', label: 'Output IR', hint: 'ir\\dwmapi.json', initial: 'ir\\symbols.json'},
+      {key: 'out', label: 'Output IR', hint: join('ir', 'dwmapi.json'), initial: symbolsIr},
     ],
   },
   {
@@ -109,9 +119,9 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Collect resumable PE/PDB observations with pgressive mode.',
     accent: 'magenta',
     fields: [
-      {key: 'dll', label: 'PE binary', hint: 'C:\\Windows\\System32\\dwmapi.dll'},
+      {key: 'dll', label: 'PE binary', hint: sampleDll},
       {key: 'pdb', label: 'Matching PDB', hint: 'Optional', optional: true},
-      {key: 'out', label: 'Inventory root', hint: 'pgressive\\dwmapi', initial: 'pgressive'},
+      {key: 'out', label: 'Inventory root', hint: join('pgressive', 'dwmapi'), initial: 'pgressive'},
     ],
   },
   {
@@ -120,7 +130,7 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Check invariants and optional target-specific golden facts.',
     accent: 'green',
     fields: [
-      {key: 'ir', label: 'IR database', hint: 'ir\\symbols.json', initial: 'ir\\symbols.json'},
+      {key: 'ir', label: 'IR database', hint: symbolsIr, initial: symbolsIr},
       {key: 'profile', label: 'Golden profile', hint: 'Optional, e.g. dui70', optional: true},
     ],
   },
@@ -130,7 +140,7 @@ export const workflows: WorkflowDefinition[] = [
     description: 'List recovered classes ordered by member count.',
     accent: 'blue',
     fields: [
-      {key: 'ir', label: 'IR database', hint: 'ir\\symbols.json', initial: 'ir\\symbols.json'},
+      {key: 'ir', label: 'IR database', hint: symbolsIr, initial: symbolsIr},
     ],
   },
   {
@@ -139,7 +149,7 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Emit verified headers with candidates kept separate.',
     accent: 'yellow',
     fields: [
-      {key: 'ir', label: 'IR database', hint: 'ir\\symbols.json', initial: 'ir\\symbols.json'},
+      {key: 'ir', label: 'IR database', hint: symbolsIr, initial: symbolsIr},
       {key: 'out', label: 'Header directory', hint: 'headers', initial: 'headers'},
     ],
   },
@@ -149,7 +159,7 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Emit a buildable proof-gated Rust crate.',
     accent: 'red',
     fields: [
-      {key: 'ir', label: 'IR database', hint: 'ir\\symbols.json', initial: 'ir\\symbols.json'},
+      {key: 'ir', label: 'IR database', hint: symbolsIr, initial: symbolsIr},
       {key: 'out', label: 'Crate directory', hint: 'rust', initial: 'rust'},
     ],
   },
@@ -159,8 +169,8 @@ export const workflows: WorkflowDefinition[] = [
     description: 'Compare symbol, signature, implementation and call-graph changes.',
     accent: 'cyan',
     fields: [
-      {key: 'old', label: 'Old IR', hint: 'ir\\old.json'},
-      {key: 'new', label: 'New IR', hint: 'ir\\new.json'},
+      {key: 'old', label: 'Old IR', hint: join('ir', 'old.json')},
+      {key: 'new', label: 'New IR', hint: join('ir', 'new.json')},
       {key: 'json', label: 'JSON report', hint: 'changes.json', optional: true},
       {key: 'markdown', label: 'Markdown report', hint: 'changes.md', optional: true},
     ],
