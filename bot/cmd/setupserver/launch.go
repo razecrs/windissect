@@ -284,6 +284,18 @@ func (s *server) ensurePosts(ctx context.Context) error {
 				"• Function recovery without a PDB\n• WinRT and WinMD output via `emit-winrt`\n• Electron app analysis\n• Optional Discord Rich Presence", false).
 			AddField("Windows warning?", "The builds aren't code-signed yet. If SmartScreen appears, choose **More info → Run anyway**. Checksums are on the release page.", false),
 		},
+		{"releases", "Windissect release · v1.0.1", starlings.NewEmbed("Windissect 1.0.1").
+			SetURL("https://github.com/razecrs/windissect/releases/tag/v1.0.1").
+			SetColor(0x5B84F7).
+			SetDescription("Fixes the first two bugs reported after launch, and Windissect now runs on Linux.").
+			AddField("Download", "[Windows installer](https://github.com/razecrs/windissect/releases/download/v1.0.1/Windissect-v1.0.1-setup-x64.exe) · "+
+				"[Windows zip](https://github.com/razecrs/windissect/releases/download/v1.0.1/Windissect-v1.0.1-windows-x64.zip) · "+
+				"[Linux x64](https://github.com/razecrs/windissect/releases/download/v1.0.1/Windissect-v1.0.1-linux-x64.tar.gz)", false).
+			AddField("Fixed", "• A PDB next to the binary is used instead of downloaded again (thanks u/pfak)\n"+
+				"• `windissect` with no arguments opens the terminal UI on an installed copy, no Node.js needed (thanks <@1280695437946388572>)", false).
+			AddField("New: Linux", "CLI, PDB downloader, terminal UI and desktop app for x86-64 Linux. Run `./install.sh` for a menu entry.", false).
+			AddField("Thanks", fmt.Sprintf("Everyone who helped is in %s.", s.mention("thanks")), false),
+		},
 		{"announcements", "Windissect announcement · launch-1.0", starlings.NewEmbed("Windissect 1.0 is out "+wave).
 			SetURL("https://github.com/razecrs/windissect/releases/tag/v1.0.0").
 			SetColor(0x5B84F7).
