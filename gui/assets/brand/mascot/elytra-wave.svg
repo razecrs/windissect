@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="clip-path-1">
+      <path d="M60 352 C60 222 150 140 256 140 C362 140 452 222 452 352 C452 412 402 436 256 436 C110 436 60 412 60 352 Z"/>
+    </clipPath>
+  </defs>
+  <title>Untitled-2</title>
+  <g id="Layer_1" data-name="Layer 1">
+    <path d="M224 436 C224 447.05 205.2 456 182 456 C158.8 456 140 447.05 140 436 C140 424.95 158.8 416 182 416 C205.2 416 224 424.95 224 436 Z" fill="#2f4fc0"/>
+    <path d="M372 436 C372 447.05 353.2 456 330 456 C306.8 456 288 447.05 288 436 C288 424.95 306.8 416 330 416 C353.2 416 372 424.95 372 436 Z" fill="#2f4fc0"/>
+    <path d="M86.1 374.95 C78.46 392.1 63.27 402 52.17 397.06 C41.07 392.12 38.26 374.21 45.9 357.05 C53.54 339.9 68.73 330 79.83 334.94 C90.93 339.88 93.74 357.79 86.1 374.95 Z" fill="#2f4fc0"/>
+    <path d="M470.24 302.3 C459.12 318.79 441.94 326.64 431.87 319.85 C421.8 313.05 422.64 294.18 433.76 277.7 C444.88 261.21 462.06 253.36 472.13 260.15 C482.2 266.95 481.36 285.82 470.24 302.3 Z" fill="#2f4fc0"/>
+    <path d="M214 150 C206 118 190 100 168 94" fill="none" stroke="#2f4fc0" stroke-width="14" stroke-linecap="round" stroke-miterlimit="10"/>
+    <path d="M298 150 C306 118 322 100 344 94" fill="none" stroke="#2f4fc0" stroke-width="14" stroke-linecap="round" stroke-miterlimit="10"/>
+    <path d="M180 93 C180 100.73 173.73 107 166 107 C158.27 107 152 100.73 152 93 C152 85.27 158.27 79 166 79 C173.73 79 180 85.27 180 93 Z" fill="#2f4fc0"/>
+    <path d="M360 93 C360 100.73 353.73 107 346 107 C338.27 107 332 100.73 332 93 C332 85.27 338.27 79 346 79 C353.73 79 360 85.27 360 93 Z" fill="#2f4fc0"/>
+    <path d="M60 352 C60 222 150 140 256 140 C362 140 452 222 452 352 C452 412 402 436 256 436 C110 436 60 412 60 352 Z" fill="#5b84f7"/>
+    <g clip-path="url(#clip-path-1)">
+      <line x1="289.5" y1="120" x2="258.4" y2="262" fill="none" stroke="#2f4fc0" stroke-width="11" stroke-linecap="round" stroke-miterlimit="10"/>
+    </g>
+    <path d="M186 326 C199.333 306 212.667 306 226 326" fill="none" stroke="#0e1220" stroke-width="12" stroke-linecap="round" stroke-miterlimit="10"/>
+    <path d="M286 326 C299.333 306 312.667 306 326 326" fill="none" stroke="#0e1220" stroke-width="12" stroke-linecap="round" stroke-miterlimit="10"/>
+    <path d="M230 360 C247.333 385.333 264.667 385.333 282 360 Z" fill="#0e1220" stroke="#0e1220" stroke-width="5" stroke-linejoin="round"/>
+  </g>
+</svg>
