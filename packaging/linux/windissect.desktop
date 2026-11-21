@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Windissect
+GenericName=Binary Analysis Workbench
+Comment=Turn Windows binaries and their PDBs into verified IR, headers and bindings
+Exec=windissect-gui %f
+TryExec=windissect-gui
+Icon=windissect
+Terminal=false
+Categories=Development;Debugger;
+Keywords=PE;PDB;DLL;reverse engineering;disassembler;headers;
+StartupNotify=true
+StartupWMClass=windissect

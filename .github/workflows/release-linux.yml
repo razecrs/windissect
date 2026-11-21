@@ -1,0 +1,78 @@
+name: Release (Linux)
+
+# Builds the Linux tarball and keeps it as a workflow artifact. It does not
+# publish anything: the maintainer reviews the artifact and attaches it to the
+# GitHub release by hand.
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package-linux:
+    # The oldest supported runner, so the desktop app's glibc floor stays low.
+    # The CLI (musl) and fleet (CGO off) are static either way.
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install build libraries
+      # The GUI links libxcb, libxkbcommon and libxkbcommon-x11 directly; the
+      # fontconfig/freetype/wayland -sys crates want headers at build time.
+      # musl-tools gives the static CLI a C toolchain for any cc-built deps;
+      # desktop-file-utils validates the menu entry.
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          pkg-config musl-tools file desktop-file-utils \
+          libfontconfig1-dev libfreetype6-dev \
+          libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+          libx11-xcb-dev libxcb1-dev libvulkan1
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-musl
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+
+    - name: Cache Cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: release-linux-${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Package
+      run: bash scripts/package-linux.sh
+
+    - name: Check the archive
+      run: |
+        cd dist
+        sha256sum -c Windissect-v*-linux-x64.tar.gz.sha256
+        tar -tzvf Windissect-v*-linux-x64.tar.gz
+        objdump -T Windissect-v*-linux-x64/windissect-gui | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: windissect-linux-x64
+        path: |
+          dist/Windissect-v*-linux-x64.tar.gz
+          dist/Windissect-v*-linux-x64.tar.gz.sha256
+        if-no-files-found: error
+        retention-days: 30
