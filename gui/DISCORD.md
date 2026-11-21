@@ -10,7 +10,8 @@ Types › BUXButtonCollection
 00:12 elapsed
 ```
 
-It talks to the Discord desktop app over its local pipe. Windissect does not
+It talks to the Discord desktop app over its local IPC endpoint (a named pipe
+on Windows, a Unix socket on Linux). Windissect does not
 sign users into Discord and never receives their Discord token. If Discord is
 not running, nothing happens, and the card appears after Discord starts.
 
@@ -28,7 +29,7 @@ The public application uses:
   registered privacy policy and terms.
 
 The VPS only serves those public HTTPS resources. Presence state itself travels
-directly from Windissect to the user's local Discord desktop pipe.
+directly from Windissect to the user's local Discord desktop app.
 
 ## Development override
 
@@ -64,7 +65,10 @@ ahead of application activity; it does not carry Windissect's presence state.
 ## How it works
 
 `gui/src/discord.rs` speaks Discord's IPC directly, with no extra crates: it
-opens `\\.\pipe\discord-ipc-0..9`, validates Discord's `READY` handshake, then
+opens `\\.\pipe\discord-ipc-0..9` on Windows, or on Linux the socket
+`discord-ipc-0..9` in `$XDG_RUNTIME_DIR` (else `$TMPDIR`, `$TMP`, `$TEMP`,
+then `/tmp`) and in its Flatpak (`app/com.discordapp.Discord/`) and Snap
+(`snap.discord/`) subdirectories, validates Discord's `READY` handshake, then
 sends `SET_ACTIVITY` frames. A worker thread sends only the latest state, at
 most every 5 seconds, reconnects every 15 seconds while Discord is closed, and
 never blocks the window. Discord fetches and proxies the public image URL; it

@@ -1,6 +1,10 @@
 //! Discord Rich Presence over Discord's local IPC, with no extra crates.
 //!
-//! The Discord client listens on `\\.\pipe\discord-ipc-N` (N = 0..9). Each
+//! The Discord client listens on `discord-ipc-N` (N = 0..9): the named pipe
+//! `\\.\pipe\discord-ipc-N` on Windows, a Unix domain socket in the runtime
+//! or temp directory elsewhere (see [`socket_candidates`], which also covers
+//! where Flatpak and Snap builds put it). Both are plain byte streams, so
+//! everything past [`connect`] is the same code on every platform. Each
 //! frame is `[u32 LE opcode][u32 LE length][JSON]`: opcode 0 is the handshake
 //! `{"v":1,"client_id":..}`, opcode 1 carries commands such as SET_ACTIVITY.
 //! Everything runs on one worker thread fed by a channel: the window only
@@ -13,7 +17,6 @@
 //! work without user setup. Environment/settings overrides remain available
 //! for development builds; see DISCORD.md.
 
-use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -217,30 +220,80 @@ fn read_frame(mut pipe: impl Read) -> std::io::Result<(u32, Value)> {
     Ok((opcode, payload))
 }
 
-fn connect(client_id: &str) -> Option<File> {
+/// The open link to Discord. A named pipe opens as an ordinary file; a Unix
+/// socket is its own type. Both are `Read + Write`, which is all the frame
+/// code and the worker need, so the platform split stops here.
+#[cfg(not(unix))]
+type Conn = std::fs::File;
+#[cfg(unix)]
+type Conn = std::os::unix::net::UnixStream;
+
+/// Sends the handshake and waits for READY. Any other reply means whatever
+/// owns this endpoint is not a Discord client we can talk to.
+fn handshake(mut conn: impl Read + Write, client_id: &str) -> bool {
+    if write_frame(
+        &mut conn,
+        OP_HANDSHAKE,
+        &json!({ "v": 1, "client_id": client_id }),
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let Ok((opcode, ready)) = read_frame(&mut conn) else {
+        return false;
+    };
+    opcode == OP_FRAME && ready.get("evt").and_then(Value::as_str) == Some("READY")
+}
+
+#[cfg(not(unix))]
+fn connect(client_id: &str) -> Option<Conn> {
+    use std::fs::OpenOptions;
     for n in 0..10 {
         let path = format!(r"\\.\pipe\discord-ipc-{n}");
         let Ok(mut pipe) = OpenOptions::new().read(true).write(true).open(&path) else {
             continue;
         };
-        if write_frame(
-            &mut pipe,
-            OP_HANDSHAKE,
-            &json!({ "v": 1, "client_id": client_id }),
-        )
-        .is_err()
-        {
-            continue;
+        if handshake(&mut pipe, client_id) {
+            return Some(pipe);
         }
-        let Ok((opcode, ready)) = read_frame(&mut pipe) else {
-            continue;
-        };
-        if opcode != OP_FRAME || ready.get("evt").and_then(Value::as_str) != Some("READY") {
-            continue;
-        }
-        return Some(pipe);
     }
     None
+}
+
+#[cfg(unix)]
+fn connect(client_id: &str) -> Option<Conn> {
+    connect_unix(&socket_candidates(|key| std::env::var(key).ok()), client_id)
+}
+
+/// Keeps the first socket that completes the handshake. A socket file left
+/// behind by a crashed Discord refuses the connection and is just skipped.
+#[cfg(unix)]
+fn connect_unix(candidates: &[PathBuf], client_id: &str) -> Option<Conn> {
+    candidates.iter().find_map(|path| {
+        let mut socket = Conn::connect(path).ok()?;
+        handshake(&mut socket, client_id).then_some(socket)
+    })
+}
+
+/// Where Discord's Unix socket can be, most likely first. The base is the
+/// first non-empty XDG_RUNTIME_DIR, TMPDIR, TMP or TEMP (else /tmp), the same
+/// choice Discord makes when it creates the socket. Sandboxed builds cannot
+/// bind there: Flatpak Discord's socket lands in `app/com.discordapp.Discord/`
+/// and Snap Discord's in `snap.discord/` under that base, so those follow.
+/// Takes the environment as a function so the list is testable anywhere.
+#[cfg_attr(not(unix), allow(dead_code))]
+fn socket_candidates(env: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let base = ["XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP"]
+        .iter()
+        .find_map(|key| env(key).filter(|value| !value.is_empty()))
+        .map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let flatpak = base.join("app").join("com.discordapp.Discord");
+    let snap = base.join("snap.discord");
+    [base, flatpak, snap]
+        .iter()
+        .flat_map(|dir| (0..10).map(move |n| dir.join(format!("discord-ipc-{n}"))))
+        .collect()
 }
 
 fn activity_acknowledged(reply: &Value, nonce: &str) -> bool {
@@ -283,7 +336,7 @@ impl Drop for Presence {
 
 fn worker(client_id: String, rx: Receiver<Message>) {
     let pid = std::process::id();
-    let mut pipe: Option<File> = None;
+    let mut pipe: Option<Conn> = None;
     let mut last_attempt: Option<Instant> = None;
     let mut last_sent: Option<Instant> = None;
     let mut sent: Option<Option<Activity>> = None;
@@ -361,6 +414,7 @@ fn worker(client_id: String, rx: Receiver<Message>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn fields_fit_discord_limits() {
@@ -415,5 +469,88 @@ mod tests {
             "nonce": "windissect-42-2"
         });
         assert!(!activity_acknowledged(&rejected, "windissect-42-2"));
+    }
+
+    fn env_of<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |key| {
+            vars.iter()
+                .find(|(name, _)| *name == key)
+                .map(|(_, value)| (*value).to_string())
+        }
+    }
+
+    #[test]
+    fn socket_base_is_the_first_set_directory() {
+        let all = env_of(&[
+            ("XDG_RUNTIME_DIR", "/run/user/1000"),
+            ("TMPDIR", "/var/tmp"),
+            ("TEMP", "/temp"),
+        ]);
+        assert_eq!(
+            socket_candidates(all)[0],
+            Path::new("/run/user/1000").join("discord-ipc-0")
+        );
+        // Empty counts as unset, as it does for Discord.
+        let later = env_of(&[("XDG_RUNTIME_DIR", ""), ("TMP", "/t"), ("TEMP", "/temp")]);
+        assert_eq!(
+            socket_candidates(later)[0],
+            Path::new("/t").join("discord-ipc-0")
+        );
+        assert_eq!(
+            socket_candidates(env_of(&[]))[0],
+            Path::new("/tmp").join("discord-ipc-0")
+        );
+    }
+
+    #[test]
+    fn socket_candidates_cover_native_flatpak_and_snap() {
+        let base = Path::new("/run/user/1000");
+        let list = socket_candidates(env_of(&[("XDG_RUNTIME_DIR", "/run/user/1000")]));
+        let flatpak = base.join("app").join("com.discordapp.Discord");
+        let snap = base.join("snap.discord");
+        assert_eq!(list.len(), 30);
+        // Native first: it is the common case, and n counts up within a directory.
+        assert_eq!(list[9], base.join("discord-ipc-9"));
+        assert_eq!(list[10], flatpak.join("discord-ipc-0"));
+        assert_eq!(list[20], snap.join("discord-ipc-0"));
+        assert_eq!(list[29], snap.join("discord-ipc-9"));
+    }
+
+    /// A fake Discord on a real Unix socket: the handshake must see READY, a
+    /// dead socket earlier in the list must be skipped, and the connection
+    /// must carry a SET_ACTIVITY round trip afterwards.
+    #[cfg(unix)]
+    #[test]
+    fn unix_socket_handshakes_with_a_fake_discord() {
+        use std::os::unix::net::UnixListener;
+        let dir = std::env::temp_dir().join(format!("windissect-ipc-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = dir.join("discord-ipc-1");
+        let listener = UnixListener::bind(&live).unwrap();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let (opcode, hello) = read_frame(&mut socket).unwrap();
+            assert_eq!(opcode, OP_HANDSHAKE);
+            assert_eq!(hello["client_id"], "123");
+            write_frame(
+                &mut socket,
+                OP_FRAME,
+                &json!({ "evt": "READY", "data": { "v": 1 } }),
+            )
+            .unwrap();
+            let (_, command) = read_frame(&mut socket).unwrap();
+            let reply = json!({ "cmd": "SET_ACTIVITY", "evt": null, "nonce": command["nonce"] });
+            write_frame(&mut socket, OP_FRAME, &reply).unwrap();
+        });
+
+        let candidates = [dir.join("discord-ipc-0"), live];
+        let mut conn = connect_unix(&candidates, "123").expect("handshake with fake Discord");
+        let command = json!({ "cmd": "SET_ACTIVITY", "args": {}, "nonce": "n-1" });
+        write_frame(&mut conn, OP_FRAME, &command).unwrap();
+        let (_, reply) = read_frame(&mut conn).unwrap();
+        assert!(activity_acknowledged(&reply, "n-1"));
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
