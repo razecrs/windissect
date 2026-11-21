@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and help
+    url: https://discord.gg/wveT8zFCus
+    about: Ask on the Windissect Discord. Issues are for bugs and feature requests.
+  - name: Report a security vulnerability
+    url: https://github.com/razecrs/windissect/security/advisories/new
+    about: Report vulnerabilities in Windissect privately, not as a public issue.

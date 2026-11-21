@@ -1,0 +1,93 @@
+name: Bug report
+description: Something in Windissect is broken or wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. The more of this you can fill in, the faster it gets fixed.
+
+        **Don't attach binaries or PDBs you aren't allowed to share.** For Windows system files, the file name and your Windows build are enough to get the same copy.
+
+  - type: input
+    id: version
+    attributes:
+      label: Windissect version
+      description: Run `windissect --version`, or check the release you downloaded.
+      placeholder: windissect 1.0.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - Desktop app (Windissect-GUI)
+        - CLI (windissect)
+        - Terminal UI (windissect with no arguments)
+        - Fleet / PDB download (windissect-fleet)
+        - Generated output (headers, Rust bindings, IR)
+        - Installer or packaging
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: Windows edition and build (`winver`), or Linux distro and version.
+      placeholder: Windows 11 24H2 (26100.4061) / Ubuntu 24.04
+    validations:
+      required: true
+
+  - type: input
+    id: binary
+    attributes:
+      label: Binary you were analyzing
+      description: File name, and where it comes from (Windows system file, your own build, third party).
+      placeholder: dwmcore.dll from C:\Windows\System32
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did
+      description: The exact command, or the clicks in the app, that lead to the problem.
+      placeholder: |
+        1. windissect-fleet pull C:\Windows\System32\dwmcore.dll
+        2. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Include any error message word for word.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output or logs
+      description: Terminal output, or the app's Output panel. It's formatted as code automatically.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I checked [known issues](https://github.com/razecrs/windissect/blob/main/docs/known-issues.md) and open issues for the same problem.
+          required: true
+        - label: This is not a security vulnerability in Windissect itself. If it is, report it privately instead (see the link on the new-issue page).
+          required: true

@@ -1,0 +1,43 @@
+name: Feature request
+description: A workflow Windissect should make faster, easier or more provable.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [roadmap](https://github.com/razecrs/windissect/blob/main/docs/roadmap.md) first; it may already be planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The task or workflow, not the solution yet. What's slow, missing or awkward today?
+      placeholder: I mod the taskbar and every Windows update I have to re-find the same vtable slots by hand...
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you imagine it working. A command, a view in the app, an output format.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you use now instead?
+      description: Workarounds, or other tools (IDA, Ghidra, pdbex...) you use for this today.
+
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part would it touch?
+      multiple: true
+      options:
+        - Desktop app
+        - CLI
+        - Terminal UI
+        - Generated headers or Rust bindings
+        - Build history and diffs
+        - ReWindows corpus
+        - Not sure
