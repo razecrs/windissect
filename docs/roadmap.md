@@ -3,21 +3,20 @@
 Planned work that is not a bug. Bugs and limits live in
 [known-issues.md](known-issues.md).
 
-## Linux desktop app
+## Linux
 
-The CLI and the fleet already run on Linux, including the PDB download, and
-pass the same verify checks as on Windows. The desktop app runs there too, with
-its own title bar and a zenity or kdialog fallback for the file dialog. Still
-missing:
+The CLI, the fleet and the desktop app run on Linux. That covers the PDB
+download, the same verify checks as on Windows, a title bar with resizable
+edges, Discord status, a DLL list from a mounted Windows install, and a
+tarball with a per-user installer (`scripts/package-linux.sh`). Still open:
 
-- **Resize from the window edges.** Client-decorated windows have to handle
-  this themselves; for now, only maximize works.
-- **Discord status.** On Linux, Discord listens on a Unix socket
-  (`$XDG_RUNTIME_DIR/discord-ipc-N`) rather than a named pipe.
-- **Machine DLL list.** "List Windows DLLs" reads System32, so it is empty on
-  Linux. It could read a mounted Windows partition or a folder the user picks.
-- **Packaging.** Ship the GUI in the Linux tarball, plus a `.desktop` file and
-  icon.
+- **First CI run of `release-linux.yml`.** It builds on Ubuntu 22.04 for an
+  older glibc floor. Its package list hasn't been tested on a clean runner.
+- **Check against real setups.** Edge dragging, Discord (native, Flatpak and
+  Snap) and NTFS mounts under `/media` have only been tested in WSL or with
+  fakes.
+- **GUI in per-push CI.** For now only tag builds compile the GUI. A separate
+  `cargo check -p windissect-gui` job would catch regressions sooner.
 
 ## v1.5.0: Settings and appearance
 

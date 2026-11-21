@@ -9,9 +9,8 @@
 //! `{"v":1,"client_id":..}`, opcode 1 carries commands such as SET_ACTIVITY.
 //! Everything runs on one worker thread fed by a channel: the window only
 //! ever sends the latest activity, the worker connects (and reconnects when
-//! Discord restarts), rate-limits, and never blocks the UI. A second thread
-//! validates Discord's acknowledgement before an activity becomes the cached
-//! state.
+//! Discord restarts), rate-limits, and never blocks the UI. The worker waits
+//! for Discord's acknowledgement before an activity becomes the cached state.
 //!
 //! Windissect ships its public Discord application ID, so installed builds
 //! work without user setup. Environment/settings overrides remain available

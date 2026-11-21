@@ -312,7 +312,10 @@ mod tests {
         renamed.binary.file = "History-Test.DLL".into();
         let second = record(&renamed, &root, None).unwrap();
         assert_eq!(second.target, "history-test");
-        assert!(second.previous.is_some(), "the second build did not see the first");
+        assert!(
+            second.previous.is_some(),
+            "the second build did not see the first"
+        );
         let dirs = std::fs::read_dir(&root)
             .unwrap()
             .flatten()

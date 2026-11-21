@@ -429,7 +429,11 @@ impl Shell {
     /// in when no mounted Windows install turned up, or the wrong one did.
     #[cfg(not(windows))]
     fn pick_dll_dir(&mut self, cx: &mut Context<Self>) {
-        self.pick_path(true, "List DLLs", cx, |_, dir, cx| {
+        self.pick_path(true, "List DLLs", cx, |this, dir, cx| {
+            // Shows "Looking for DLLs…" until the folder has been read.
+            this.dll_dir = None;
+            this.dll_scanned = false;
+            cx.notify();
             cx.spawn(async move |this, cx| {
                 let scan = dir.clone();
                 let dlls = cx
@@ -2156,7 +2160,8 @@ impl Shell {
                     (None, true) => "No Windows install found under /mnt, /media or \
                                      /run/media. Choose a folder of DLLs instead."
                         .to_string(),
-                    (None, false) => format!("{count} of {total}"),
+                    // Reading System32 through WSL's /mnt/c takes about a minute.
+                    (None, false) => "Looking for DLLs\u{2026}".to_string(),
                 };
                 header = header.child(caption(where_from)).child(
                     Button::new("dll-dir")
