@@ -54,8 +54,7 @@ pub struct Settings {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .map(|dir| PathBuf::from(dir).join("Windissect").join("settings.json"))
+    crate::engine::settings_path()
 }
 
 fn read_settings_json() -> Value {

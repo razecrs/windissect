@@ -21,7 +21,8 @@ pub struct Engine {
     pub fleet: Option<PathBuf>,
     /// The repository, for its docs.
     pub repo: Option<PathBuf>,
-    /// Where IR and outputs are written: %LOCALAPPDATA%\Windissect\workspace.
+    /// Where IR and outputs are written: %LOCALAPPDATA%\Windissect\workspace
+    /// on Windows, ~/.local/share/Windissect/workspace elsewhere.
     pub workspace: PathBuf,
 }
 
@@ -68,21 +69,22 @@ impl Engine {
         if let Some(bin) = std::env::var_os("WINDISSECT_BIN") {
             candidates.push(PathBuf::from(bin));
         }
+        let cli_name = exe_name("windissect");
         if let Some(repo) = &repo {
-            candidates.push(repo.join("target").join("release").join("windissect.exe"));
-            candidates.push(repo.join("target").join("debug").join("windissect.exe"));
+            candidates.push(repo.join("target").join("release").join(&cli_name));
+            candidates.push(repo.join("target").join("debug").join(&cli_name));
         }
-        candidates.push(exe_dir.join("windissect.exe"));
+        candidates.push(exe_dir.join(&cli_name));
         let cli = candidates
             .into_iter()
             .find(|p| p.is_file())
-            .unwrap_or_else(|| PathBuf::from("windissect.exe"));
+            .unwrap_or_else(|| PathBuf::from(&cli_name));
 
         // The fleet owns symbol-server downloads. Shipped beside the GUI as
-        // windissect-fleet.exe; in a checkout it is the root-level driver.
+        // windissect-fleet(.exe); in a checkout it is the root-level driver.
         let fleet = [
-            Some(exe_dir.join("windissect-fleet.exe")),
-            repo.as_ref().map(|r| r.join("windissect.exe")),
+            Some(exe_dir.join(exe_name("windissect-fleet"))),
+            repo.as_ref().map(|r| r.join(&cli_name)),
         ]
         .into_iter()
         .flatten()
@@ -376,9 +378,46 @@ impl Cancel {
     }
 }
 
-fn settings_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA")
-        .map(|dir| PathBuf::from(dir).join("Windissect").join("settings.json"))
+/// `name` with this platform's executable suffix: `.exe` on Windows, none
+/// elsewhere.
+fn exe_name(name: &str) -> String {
+    format!("{name}{}", std::env::consts::EXE_SUFFIX)
+}
+
+/// A directory from the environment, if it is set to an absolute path.
+fn env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+/// `$HOME/<rest>`, for the XDG defaults.
+fn home_join(rest: &str) -> Option<PathBuf> {
+    env_dir("HOME").map(|home| home.join(rest))
+}
+
+/// Per-user configuration: `%APPDATA%` on Windows, `$XDG_CONFIG_HOME` or
+/// `~/.config` elsewhere.
+fn config_root() -> Option<PathBuf> {
+    if cfg!(windows) {
+        env_dir("APPDATA")
+    } else {
+        env_dir("XDG_CONFIG_HOME").or_else(|| home_join(".config"))
+    }
+}
+
+/// Per-user data: `%LOCALAPPDATA%` on Windows, `$XDG_DATA_HOME` or
+/// `~/.local/share` elsewhere.
+fn data_root() -> Option<PathBuf> {
+    if cfg!(windows) {
+        env_dir("LOCALAPPDATA")
+    } else {
+        env_dir("XDG_DATA_HOME").or_else(|| home_join(".local/share"))
+    }
+}
+
+pub fn settings_path() -> Option<PathBuf> {
+    config_root().map(|dir| dir.join("Windissect").join("settings.json"))
 }
 
 fn read_settings() -> serde_json::Value {
@@ -390,8 +429,7 @@ fn read_settings() -> serde_json::Value {
 }
 
 pub fn default_workspace() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
+    data_root()
         .unwrap_or_else(std::env::temp_dir)
         .join("Windissect")
         .join("workspace")
@@ -408,7 +446,9 @@ fn configured_workspace() -> Option<PathBuf> {
 /// Saves the workspace folder to settings.json, keeping every other key.
 pub fn save_workspace(path: &Path) -> std::io::Result<()> {
     let Some(file) = settings_path() else {
-        return Err(std::io::Error::other("APPDATA is not set"));
+        return Err(std::io::Error::other(
+            "no per-user settings folder (APPDATA, XDG_CONFIG_HOME or HOME)",
+        ));
     };
     let mut settings = read_settings();
     settings["workspace"] = serde_json::Value::String(path.display().to_string());

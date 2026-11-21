@@ -410,17 +410,52 @@ impl Shell {
     }
 
     fn pick_file(&mut self, cx: &mut Context<Self>) {
+        self.pick_path(false, "Open", cx, Self::open);
+    }
+
+    /// Asks for one file (or folder) and hands it to `then`. On Linux the
+    /// system dialog comes from the XDG file-chooser portal, which some
+    /// desktops (WSLg, bare window managers) lack; zenity or kdialog stand in
+    /// there, and if neither exists the output panel says why nothing opened.
+    fn pick_path(
+        &mut self,
+        directories: bool,
+        prompt: &'static str,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, PathBuf, &mut Context<Self>) + 'static,
+    ) {
         let answer = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
+            files: !directories,
+            directories,
             multiple: false,
-            prompt: Some("Open".into()),
+            prompt: Some(prompt.into()),
         });
         cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = answer.await {
-                if let Some(path) = paths.into_iter().next() {
-                    let _ = this.update(cx, |this, cx| this.open(path, cx));
+            let picked = match answer.await {
+                Ok(Ok(paths)) => paths.and_then(|p| p.into_iter().next()),
+                Ok(Err(portal_error)) => {
+                    let fallback = cx
+                        .background_executor()
+                        .spawn(async move { dialog_program_pick(directories, prompt) })
+                        .await;
+                    match fallback {
+                        Some(path) => path,
+                        None => {
+                            let _ = this.update(cx, |this, cx| {
+                                this.note(format!(
+                                    "\u{2717} no file dialog available: {portal_error}. \
+                                     Install xdg-desktop-portal, zenity or kdialog."
+                                ));
+                                cx.notify();
+                            });
+                            None
+                        }
+                    }
                 }
+                Err(_) => None,
+            };
+            if let Some(path) = picked {
+                let _ = this.update(cx, |this, cx| then(this, path, cx));
             }
         })
         .detach();
@@ -969,39 +1004,65 @@ impl Shell {
         if self.busy {
             return;
         }
-        let answer = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Use as workspace".into()),
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = answer.await {
-                if let Some(dir) = paths.into_iter().next() {
-                    let _ = this.update(cx, |this, cx| {
-                        let _ = std::fs::create_dir_all(dir.join("ir"));
-                        match crate::engine::save_workspace(&dir) {
-                            Ok(()) => {
-                                this.engine.workspace = dir.clone();
-                                this.note(format!("workspace: {} (saved)", dir.display()));
-                            }
-                            Err(err) => this.note(format!(
-                                "\u{2717} could not save the workspace setting: {err}"
-                            )),
-                        }
-                        cx.notify();
-                    });
+        self.pick_path(true, "Use as workspace", cx, |this, dir, cx| {
+            let _ = std::fs::create_dir_all(dir.join("ir"));
+            match crate::engine::save_workspace(&dir) {
+                Ok(()) => {
+                    this.engine.workspace = dir.clone();
+                    this.note(format!("workspace: {} (saved)", dir.display()));
                 }
+                Err(err) => this.note(format!(
+                    "\u{2717} could not save the workspace setting: {err}"
+                )),
             }
-        })
-        .detach();
+            cx.notify();
+        });
     }
 
     fn open_workspace(&mut self) {
-        let _ = std::process::Command::new("explorer.exe")
+        let opener = if cfg!(windows) {
+            "explorer.exe"
+        } else {
+            "xdg-open"
+        };
+        if let Err(err) = std::process::Command::new(opener)
             .arg(&self.engine.workspace)
-            .spawn();
+            .spawn()
+        {
+            self.note(format!(
+                "\u{2717} could not open {}: {err}",
+                self.engine.workspace.display()
+            ));
+        }
     }
+}
+
+/// A dialog program for Linux desktops without the file-chooser portal:
+/// zenity, then kdialog. `None` when neither is installed; `Some(None)` when
+/// the user cancelled.
+fn dialog_program_pick(directories: bool, title: &str) -> Option<Option<PathBuf>> {
+    if cfg!(windows) {
+        return None;
+    }
+    let title_arg = format!("--title={title}");
+    let zenity: Vec<&str> = if directories {
+        vec!["--file-selection", "--directory", &title_arg]
+    } else {
+        vec!["--file-selection", &title_arg]
+    };
+    let kdialog: Vec<&str> = if directories {
+        vec!["--getexistingdirectory", "."]
+    } else {
+        vec!["--getopenfilename", "."]
+    };
+    for (program, args) in [("zenity", zenity), ("kdialog", kdialog)] {
+        let Ok(out) = std::process::Command::new(program).args(&args).output() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return Some((out.status.success() && !text.is_empty()).then(|| PathBuf::from(text)));
+    }
+    None
 }
 
 /// What a running job reports to the window.
@@ -3139,6 +3200,16 @@ impl Render for Shell {
             .bg(rgb(EDITOR))
             .text_color(rgb(TEXT))
             .text_sm()
+            // Linux windows are client decorated (see main.rs), so the title
+            // and the minimize, maximize and close buttons are drawn here.
+            .when(cfg!(target_os = "linux"), |d| {
+                d.child(
+                    gpui_kit::component::TitleBar::new()
+                        .bg(rgb(CHROME))
+                        .border_color(rgb(LINE))
+                        .child(div().text_color(rgb(MUTED)).child("Windissect")),
+                )
+            })
             .child(
                 div()
                     .flex_1()
