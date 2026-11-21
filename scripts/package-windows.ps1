@@ -79,6 +79,26 @@ try {
 
     Write-Host "Distribution: $zip"
     Write-Host "SHA-256:      $zipHash"
+
+    # Installer (Inno Setup 6). Skipped with a warning when ISCC isn't installed:
+    #   winget install --id JRSoftware.InnoSetup -e --scope user
+    $iscc = @(
+        $env:ISCC,
+        (Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'),
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+    if (-not $iscc) {
+        Write-Warning 'Inno Setup (ISCC.exe) not found; skipping the installer.'
+        return
+    }
+    & $iscc /Q "/DAppVersion=$Version" "/DStage=$stage" "/DOutDir=$dist" 'packaging/windissect.iss'
+    if ($LASTEXITCODE -ne 0) { throw "installer build failed ($LASTEXITCODE)" }
+    $setup = Join-Path $dist "Windissect-v$Version-setup-x64.exe"
+    $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash.ToLowerInvariant()
+    Set-Content -LiteralPath "$setup.sha256" -Value "$setupHash  $([IO.Path]::GetFileName($setup))" -Encoding ascii
+    Write-Host "Installer:    $setup"
+    Write-Host "SHA-256:      $setupHash"
 }
 finally {
     Pop-Location
