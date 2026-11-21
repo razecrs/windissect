@@ -465,7 +465,7 @@ fn emit_rust(
 ) -> Result<()> {
     let crate_name = format!("{}-semantic", stem.to_ascii_lowercase().replace('_', "-"));
     let cargo = format!(
-        "[package]\nname = {crate_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\nlicense = \"MIT\"\n\n[dependencies]\n"
+        "[package]\nname = {crate_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\nlicense = \"MIT\"\n\n[dependencies]\n\n# Standalone crate: builds on its own even when generated inside another\n# Cargo workspace.\n[workspace]\n"
     );
     crate::diff::atomic_write(&root.join("rust/Cargo.toml"), cargo.as_bytes())?;
     let mut lib = format!(

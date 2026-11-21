@@ -167,15 +167,15 @@ fn dataflow<V: Clone + PartialEq>(
         let next = f.instructions.get(i + 1).map(|n| n.rva);
         for succ in successors(ins, next) {
             let Some(&j) = index.get(&succ) else { continue };
-            let merged = match &states[j] {
-                None => state.clone(),
-                Some(old) => {
+            let merged = states[j].as_ref().map_or_else(
+                || state.clone(),
+                |old| {
                     let mut m = old.clone();
                     // Keep only agreeing registers: a disagreement is unknown.
                     m.retain(|reg, value| state.get(reg) == Some(value));
                     m
-                }
-            };
+                },
+            );
             if states[j].as_ref() != Some(&merged) {
                 states[j] = Some(merged);
                 queue.push_back(j);
@@ -536,7 +536,7 @@ mod tests {
 
     const SET_THEME: &str = "?SetTheme@Host@@QEAAXH@Z";
 
-    /// The shape of TaskbarHost::SetTheme -> consume_...::XamlContent.
+    /// The shape of `TaskbarHost::SetTheme` -> `consume_...::XamlContent`.
     fn sample(extra_write: bool) -> Database {
         let mut db = Database::default();
         db.binary.image_base = Some(0x1_8000_0000);

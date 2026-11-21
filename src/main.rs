@@ -51,7 +51,10 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 #[derive(Parser)]
-#[command(version, about = "Dissect Windows PE binaries and matching PDBs into trustworthy IR and bindings")]
+#[command(
+    version,
+    about = "Dissect Windows PE binaries and matching PDBs into trustworthy IR and bindings"
+)]
 struct Cli {
     /// Relaunch the interactive TUI with administrator rights.
     #[arg(long, global = true)]
@@ -207,7 +210,7 @@ enum Cmd {
         out: PathBuf,
         #[arg(long)]
         ir: PathBuf,
-        /// NAME=MANGLED_INSTANCE_METHOD, repeatable.
+        /// `NAME=MANGLED_INSTANCE_METHOD`, repeatable.
         #[arg(long, required = true)]
         want: Vec<String>,
         /// Header stem: writes <name>_proofs.h and <name>_proofs.json.
@@ -391,6 +394,8 @@ fn main() -> Result<()> {
     dispatch(command)
 }
 
+// One arm per subcommand; splitting the match would only scatter it.
+#[allow(clippy::too_many_lines)]
 fn dispatch(command: Cmd) -> Result<()> {
     match command {
         Cmd::Decompile {

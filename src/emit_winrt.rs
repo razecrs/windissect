@@ -185,6 +185,8 @@ fn struct_from<'a>(
 }
 
 /// SHA-1 (FIPS 180-4). Only used to derive parameterized `WinRT` IIDs.
+// The single-letter names follow the standard's notation (a..e, f, k, w).
+#[allow(clippy::many_single_char_names)]
 fn sha1(data: &[u8]) -> [u8; 20] {
     let mut h: [u32; 5] = [
         0x6745_2301,
@@ -392,6 +394,9 @@ fn interface_from<'a>(record: &Value, source: &'a Source) -> Result<Interface<'a
 }
 
 /// Write `<name>_winrt.h` into `out_dir` for the `wanted` qualified interfaces.
+// Emits the header top to bottom in one pass; splitting it would only
+// thread the output buffer through helpers.
+#[allow(clippy::too_many_lines)]
 pub fn emit_winrt(dbs: &[Database], wanted: &[String], name: &str, out_dir: &Path) -> Result<()> {
     if wanted.is_empty() {
         bail!("emit-winrt needs at least one --want interface");

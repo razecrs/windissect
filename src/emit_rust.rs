@@ -121,6 +121,10 @@ description = "Windissect-generated Rust FFI bindings for {dll}. Windows only."
 license = "MIT"
 
 [dependencies]
+
+# Standalone crate: builds on its own even when generated inside another
+# Cargo workspace.
+[workspace]
 "#
     );
     fs::write(out_dir.join("Cargo.toml"), cargo_toml)?;
