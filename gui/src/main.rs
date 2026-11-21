@@ -31,6 +31,13 @@ fn main() {
 /// Windows draws its own title bar. Linux compositors often don't (GNOME and
 /// WSLg have no server-side decorations), so there the window is client
 /// decorated and the shell renders a title bar with its own window buttons.
+///
+/// The rest of the frame is not ours to draw. `gpui_kit::open_window` mounts
+/// the Kit's root, whose window plugin wraps every client-decorated window in
+/// gpui-component's `WindowBorder`: it sets the client inset, draws the border
+/// and shadow, shows resize cursors along the edges and corners, and starts
+/// the compositor's resize on mouse down, skipping tiled sides. Wrapping the
+/// shell in a second resize frame would double the inset and the hit bands.
 fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
     let window_bounds = Some(WindowBounds::Windowed(bounds));
     if cfg!(target_os = "linux") {
