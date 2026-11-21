@@ -149,7 +149,7 @@ func (s *server) ensureAutoMod(ctx context.Context, inviteCode string) error {
 		return autoModAction{Type: 1, Metadata: map[string]any{"custom_message": message}}
 	}
 	alert := autoModAction{Type: 2, Metadata: map[string]any{"channel_id": modLogs}}
-	staff := []string{s.roles["maintainer"].ID.String(), s.roles["contributor"].ID.String()}
+	staff := []string{s.roles["maintainer"].ID.String(), s.roles["moderator"].ID.String(), s.roles["contributor"].ID.String()}
 	allow := []string{}
 	if inviteCode != "" {
 		allow = append(allow, "*discord.gg/"+inviteCode+"*")
@@ -262,16 +262,19 @@ func (s *server) emoji(ctx context.Context, name string) string {
 	return ""
 }
 
+// post is one pinned bot message, identified by its embed footer.
+type post struct {
+	channel, footer string
+	embed           *starlings.Embed
+}
+
 // ensurePosts publishes the 1.0 launch posts once. Each post is found again
 // by its footer, so a rerun edits it in place instead of posting twice.
 func (s *server) ensurePosts(ctx context.Context) error {
 	wave := s.emoji(ctx, "elytra_wave")
 	installer := "https://github.com/razecrs/windissect/releases/download/v1.0.0/Windissect-v1.0.0-setup-x64.exe"
 	portable := "https://github.com/razecrs/windissect/releases/download/v1.0.0/Windissect-v1.0.0-windows-x64.zip"
-	posts := []struct {
-		channel, footer string
-		embed           *starlings.Embed
-	}{
+	posts := []post{
 		{"releases", "Windissect release · v1.0.0", starlings.NewEmbed("Windissect 1.0.0").
 			SetURL("https://github.com/razecrs/windissect/releases/tag/v1.0.0").
 			SetColor(0x5B84F7).
@@ -291,6 +294,7 @@ func (s *server) ensurePosts(ctx context.Context) error {
 			AddField("Meet Elytra", "Our mascot, a small beetle named after the wing cases that close over its back. Find it in the emoji picker.", false),
 		},
 	}
+	posts = append(posts, s.thanksPosts()...)
 	for _, post := range posts {
 		post.embed.SetFooter(post.footer, "")
 		channel := s.text(post.channel)

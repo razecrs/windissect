@@ -80,7 +80,13 @@ func (s *server) apply(ctx context.Context) error {
 	if err := s.ensureRoles(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureRoleOrder(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureOwnerRole(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureModerators(ctx); err != nil {
 		return err
 	}
 	if err := s.ensureLayout(ctx); err != nil {
@@ -156,6 +162,11 @@ func (s *server) ensureRoles(ctx context.Context) error {
 			starlings.PermissionKickMembers | starlings.PermissionBanMembers |
 			starlings.PermissionModerateMembers | starlings.PermissionManageChannels |
 			starlings.PermissionManageMessages | starlings.PermissionManageThreads, hoist: true},
+		// Moderation without server administration: no channel or role edits.
+		{name: "Moderator", color: 0x5FD4A0, permissions: starlings.PermissionViewAuditLog |
+			starlings.PermissionKickMembers | starlings.PermissionBanMembers |
+			starlings.PermissionModerateMembers | starlings.PermissionManageMessages |
+			starlings.PermissionManageThreads, hoist: true},
 		{name: "Contributor", color: 0x86A9E8, hoist: true},
 		{name: "Researcher", color: 0xA78BFA},
 		{name: "Early Access", color: 0xF2C94C},
@@ -227,6 +238,7 @@ func (s *server) ensureLayout(ctx context.Context) error {
 		{category: categories[3], name: "ci-and-builds", topic: "Automated build, test, security, and release status.", readOnly: true},
 		{category: categories[3], name: "bot-commands", topic: "Use Windissect and community slash commands here."},
 
+		{category: categories[4], name: "thanks", topic: "The people who found bugs, tested builds and made Windissect better. Thank you.", readOnly: true},
 		{category: categories[4], name: "showcase", topic: "Show what Windissect helped you understand or build."},
 		{category: categories[4], name: "your-projects", topic: "Share relevant systems, modding, tooling, and reverse-engineering projects."},
 		{category: categories[4], name: "off-topic", topic: "A relaxed space; the same respect and safety rules still apply.", slowmode: 5},
