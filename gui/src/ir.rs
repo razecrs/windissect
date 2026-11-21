@@ -295,7 +295,11 @@ fn short_name(full: &str) -> String {
         }
     }
     let name = head[start.min(head.len())..].trim();
-    if name.is_empty() { head.trim().to_string() } else { name.to_string() }
+    if name.is_empty() {
+        head.trim().to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -305,19 +309,33 @@ mod tests {
     #[test]
     fn collapses_only_long_template_arguments() {
         use super::collapse_templates;
-        assert_eq!(collapse_templates("struct _tlgWrapperByVal<4> const &"), "struct _tlgWrapperByVal<4> const &");
-        assert_eq!(collapse_templates("A<struct B<int>, class C<long>>::f<int>"), "A<\u{2026}>::f<int>");
+        assert_eq!(
+            collapse_templates("struct _tlgWrapperByVal<4> const &"),
+            "struct _tlgWrapperByVal<4> const &"
+        );
+        assert_eq!(
+            collapse_templates("A<struct B<int>, class C<long>>::f<int>"),
+            "A<\u{2026}>::f<int>"
+        );
         assert_eq!(collapse_templates("plain"), "plain");
     }
 
     #[test]
     fn short_names_survive_templates_and_parameters() {
-        assert_eq!(short_name("public: long __cdecl BUXButtonCollection::ShowNextPage(void)"), "ShowNextPage");
         assert_eq!(
-            short_name("public: virtual void * __cdecl wistd::__function::__func<class <lambda_8d>, bool __cdecl (void *, unsigned int)>::`vector deleting destructor'(unsigned int)"),
+            short_name("public: long __cdecl BUXButtonCollection::ShowNextPage(void)"),
+            "ShowNextPage"
+        );
+        assert_eq!(
+            short_name(
+                "public: virtual void * __cdecl wistd::__function::__func<class <lambda_8d>, bool __cdecl (void *, unsigned int)>::`vector deleting destructor'(unsigned int)"
+            ),
             "`vector deleting destructor'"
         );
-        assert_eq!(short_name("protected: long __cdecl A<int, B<C> >::Get(struct X *) const"), "Get");
+        assert_eq!(
+            short_name("protected: long __cdecl A<int, B<C> >::Get(struct X *) const"),
+            "Get"
+        );
         assert_eq!(short_name("_tlgEnableCallback"), "_tlgEnableCallback");
     }
 }
@@ -387,7 +405,11 @@ fn pretty_declaration(sig: &Signature, fallback: &str) -> String {
     let params = if sig.params.is_empty() {
         "()".to_string()
     } else {
-        let list: Vec<String> = sig.params.iter().map(|p| format!("    {}", p.text.clone().unwrap_or_default())).collect();
+        let list: Vec<String> = sig
+            .params
+            .iter()
+            .map(|p| format!("    {}", p.text.clone().unwrap_or_default()))
+            .collect();
         format!("(\n{}\n)", list.join(",\n"))
     };
     let mut text = String::new();
@@ -418,7 +440,11 @@ fn symbols_table(symbols: &[Symbol]) -> Table {
             let (name, title, subtitle) = match sig {
                 Some(g) => {
                     let method = collapse_templates(g.method.as_deref().unwrap_or_default());
-                    let owner = g.class.as_deref().or(g.namespace.as_deref()).map(collapse_templates);
+                    let owner = g
+                        .class
+                        .as_deref()
+                        .or(g.namespace.as_deref())
+                        .map(collapse_templates);
                     let name = match &owner {
                         Some(o) => format!("{o}::{method}"),
                         None => method.clone(),
@@ -430,31 +456,85 @@ fn symbols_table(symbols: &[Symbol]) -> Table {
             let mut detail = props(vec![
                 ("Kind", text(&s.kind)),
                 ("RVA", hex(s.rva)),
-                ("Size", s.size.map(|v| format!("{v} bytes")).unwrap_or_default()),
+                (
+                    "Size",
+                    s.size.map(|v| format!("{v} bytes")).unwrap_or_default(),
+                ),
                 ("Source", text(&s.provenance)),
                 ("Confidence", text(&s.confidence)),
-                ("Exported", s.exported.map(|e| if e { "yes" } else { "no" }.to_string()).unwrap_or_default()),
+                (
+                    "Exported",
+                    s.exported
+                        .map(|e| if e { "yes" } else { "no" }.to_string())
+                        .unwrap_or_default(),
+                ),
             ]);
             if let Some(g) = sig {
                 detail.extend(props(vec![
-                    ("Access", g.access.clone().map(|a| a.trim_end_matches(':').to_string()).unwrap_or_default()),
+                    (
+                        "Access",
+                        g.access
+                            .clone()
+                            .map(|a| a.trim_end_matches(':').to_string())
+                            .unwrap_or_default(),
+                    ),
                     ("Storage", text(&g.storage)),
                     ("Calling conv", text(&g.callconv)),
-                    ("Returns", g.ret.as_ref().and_then(|r| r.text.as_deref()).map(collapse_templates).unwrap_or_default()),
-                    ("Namespace", g.namespace.as_deref().map(collapse_templates).unwrap_or_default()),
-                    ("Const", if g.is_const { "yes".into() } else { String::new() }),
+                    (
+                        "Returns",
+                        g.ret
+                            .as_ref()
+                            .and_then(|r| r.text.as_deref())
+                            .map(collapse_templates)
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "Namespace",
+                        g.namespace
+                            .as_deref()
+                            .map(collapse_templates)
+                            .unwrap_or_default(),
+                    ),
+                    (
+                        "Const",
+                        if g.is_const {
+                            "yes".into()
+                        } else {
+                            String::new()
+                        },
+                    ),
                 ]));
                 if !g.params.is_empty() {
-                    let types: Vec<String> = g.params.iter().map(|p| p.text.clone().unwrap_or_default()).collect();
+                    let types: Vec<String> = g
+                        .params
+                        .iter()
+                        .map(|p| p.text.clone().unwrap_or_default())
+                        .collect();
                     detail.push(Detail::Table {
                         title: "Parameters".into(),
                         headers: vec!["#".into(), "type".into()],
-                        rows: types.iter().enumerate().map(|(i, t)| vec![i.to_string(), collapse_templates(t)]).collect(),
-                        notes: types.iter().map(|t| if collapse_templates(t) != *t { t.clone() } else { String::new() }).collect(),
+                        rows: types
+                            .iter()
+                            .enumerate()
+                            .map(|(i, t)| vec![i.to_string(), collapse_templates(t)])
+                            .collect(),
+                        notes: types
+                            .iter()
+                            .map(|t| {
+                                if collapse_templates(t) != *t {
+                                    t.clone()
+                                } else {
+                                    String::new()
+                                }
+                            })
+                            .collect(),
                         total: types.len(),
                     });
                 }
-                detail.push(Detail::Fold("Declaration".into(), pretty_declaration(g, &full)));
+                detail.push(Detail::Fold(
+                    "Declaration".into(),
+                    pretty_declaration(g, &full),
+                ));
             } else if s.demangled.is_some() {
                 detail.push(Detail::Fold("Declaration".into(), full.clone()));
             }
@@ -493,15 +573,26 @@ fn functions_table(functions: &[Function], names: &HashMap<&str, &str>) -> Table
                 .unwrap_or_else(|| format!("sub_{:X}", f.rva.unwrap_or(0)));
             let mut detail = props(vec![
                 ("RVA", hex(f.rva)),
-                ("Size", f.size.map(|v| format!("{v} bytes")).unwrap_or_default()),
+                (
+                    "Size",
+                    f.size.map(|v| format!("{v} bytes")).unwrap_or_default(),
+                ),
                 ("Names", f.symbol_ids.len().to_string()),
             ]);
             if all.len() > 1 {
                 detail.push(Detail::Table {
                     title: "Same code, other names".into(),
                     headers: vec!["name".into()],
-                    rows: all[1..].iter().take(MAX_SUBROWS).map(|n| vec![short_name(n)]).collect(),
-                    notes: all[1..].iter().take(MAX_SUBROWS).map(|n| n.to_string()).collect(),
+                    rows: all[1..]
+                        .iter()
+                        .take(MAX_SUBROWS)
+                        .map(|n| vec![short_name(n)])
+                        .collect(),
+                    notes: all[1..]
+                        .iter()
+                        .take(MAX_SUBROWS)
+                        .map(|n| n.to_string())
+                        .collect(),
                     total: all.len() - 1,
                 });
             }
@@ -519,7 +610,11 @@ fn functions_table(functions: &[Function], names: &HashMap<&str, &str>) -> Table
                     },
                     hex(f.rva),
                 ],
-                tone: if f.symbol_ids.is_empty() { Tone::Weak } else { Tone::Good },
+                tone: if f.symbol_ids.is_empty() {
+                    Tone::Weak
+                } else {
+                    Tone::Good
+                },
                 detail,
             }
         })
@@ -547,7 +642,14 @@ fn types_table(types: &[Layout], names: &HashMap<&str, &str>) -> Table {
             };
             let complete = t.complete_layout == Some(true);
             let mut detail = props(vec![
-                ("Layout", if complete { "complete".into() } else { "partial".into() }),
+                (
+                    "Layout",
+                    if complete {
+                        "complete".into()
+                    } else {
+                        "partial".into()
+                    },
+                ),
                 ("Offsets", distinct.to_string()),
                 ("Observations", t.observations.len().to_string()),
                 ("Source", text(&t.source)),
@@ -559,12 +661,21 @@ fn types_table(types: &[Layout], names: &HashMap<&str, &str>) -> Table {
             if !fields.is_empty() {
                 detail.push(Detail::Table {
                     title: "Observed fields".into(),
-                    headers: vec!["offset".into(), "size".into(), "access".into(), "trust".into(), "seen in".into()],
+                    headers: vec![
+                        "offset".into(),
+                        "size".into(),
+                        "access".into(),
+                        "trust".into(),
+                        "seen in".into(),
+                    ],
                     rows: fields
                         .iter()
                         .take(MAX_SUBROWS)
                         .map(|o| {
-                            let source = o.evidence_symbol.as_deref().map(|id| short_name(readable(names, id)));
+                            let source = o
+                                .evidence_symbol
+                                .as_deref()
+                                .map(|id| short_name(readable(names, id)));
                             vec![
                                 format!("+0x{:X}", o.offset.unwrap_or(0)),
                                 format!("{}B", o.width.unwrap_or(0)),
@@ -577,7 +688,12 @@ fn types_table(types: &[Layout], names: &HashMap<&str, &str>) -> Table {
                     notes: fields
                         .iter()
                         .take(MAX_SUBROWS)
-                        .map(|o| o.evidence_symbol.as_deref().map(|id| readable(names, id).to_string()).unwrap_or_default())
+                        .map(|o| {
+                            o.evidence_symbol
+                                .as_deref()
+                                .map(|id| readable(names, id).to_string())
+                                .unwrap_or_default()
+                        })
                         .collect(),
                     total: fields.len(),
                 });
@@ -588,8 +704,16 @@ fn types_table(types: &[Layout], names: &HashMap<&str, &str>) -> Table {
                 search: String::new(),
                 name: text(&t.name),
                 cols: [
-                    if distinct == 0 { "none".into() } else { distinct.to_string() },
-                    if complete { "complete".into() } else { "partial".into() },
+                    if distinct == 0 {
+                        "none".into()
+                    } else {
+                        distinct.to_string()
+                    },
+                    if complete {
+                        "complete".into()
+                    } else {
+                        "partial".into()
+                    },
                     String::new(),
                 ],
                 tone: if complete {
@@ -621,7 +745,11 @@ fn slot_names(e: &Slot, names: &HashMap<&str, &str>) -> Vec<String> {
     }
     e.target_candidates
         .iter()
-        .filter_map(|c| c.name.clone().or_else(|| c.id.as_deref().map(|id| readable(names, id).to_string())))
+        .filter_map(|c| {
+            c.name
+                .clone()
+                .or_else(|| c.id.as_deref().map(|id| readable(names, id).to_string()))
+        })
         .collect()
 }
 
@@ -671,7 +799,12 @@ fn vtables_table(vtables: &[VTable], names: &HashMap<&str, &str>) -> Table {
                             vec![e.slot.unwrap_or(0).to_string(), flags.to_string(), target]
                         })
                         .collect(),
-                    notes: v.entries.iter().take(MAX_SUBROWS).map(|e| slot_note(e, names)).collect(),
+                    notes: v
+                        .entries
+                        .iter()
+                        .take(MAX_SUBROWS)
+                        .map(|e| slot_note(e, names))
+                        .collect(),
                     total: v.entries.len(),
                 });
             }
@@ -679,13 +812,25 @@ fn vtables_table(vtables: &[VTable], names: &HashMap<&str, &str>) -> Table {
                 title: None,
                 subtitle: None,
                 search: String::new(),
-                name: v.demangled.clone().or_else(|| v.mangled.clone()).unwrap_or_default(),
+                name: v
+                    .demangled
+                    .clone()
+                    .or_else(|| v.mangled.clone())
+                    .unwrap_or_default(),
                 cols: [
                     v.entries.len().to_string(),
-                    if ambiguous > 0 { format!("{ambiguous} ambiguous") } else { "exact".into() },
+                    if ambiguous > 0 {
+                        format!("{ambiguous} ambiguous")
+                    } else {
+                        "exact".into()
+                    },
                     hex(v.rva),
                 ],
-                tone: if ambiguous > 0 { Tone::Weak } else { tone_of(v.confidence.as_deref()) },
+                tone: if ambiguous > 0 {
+                    Tone::Weak
+                } else {
+                    tone_of(v.confidence.as_deref())
+                },
                 detail,
             }
         })
@@ -701,7 +846,12 @@ fn vtables_table(vtables: &[VTable], names: &HashMap<&str, &str>) -> Table {
 }
 
 /// Classes and enums vary by producer, so they are shown field by field.
-fn generic_table(title: &'static str, description: &'static str, empty: &'static str, records: &[Value]) -> Table {
+fn generic_table(
+    title: &'static str,
+    description: &'static str,
+    empty: &'static str,
+    records: &[Value],
+) -> Table {
     let rows = records
         .iter()
         .map(|r| {
@@ -725,7 +875,9 @@ fn generic_table(title: &'static str, description: &'static str, empty: &'static
                     }
                     let label = key.replace('_', " ");
                     match value {
-                        Value::Array(items) if items.iter().all(Value::is_object) && !items.is_empty() => {
+                        Value::Array(items)
+                            if items.iter().all(Value::is_object) && !items.is_empty() =>
+                        {
                             let headers: Vec<String> = items[0]
                                 .as_object()
                                 .map(|o| o.keys().take(4).cloned().collect())
@@ -735,14 +887,31 @@ fn generic_table(title: &'static str, description: &'static str, empty: &'static
                                 rows: items
                                     .iter()
                                     .take(MAX_SUBROWS)
-                                    .map(|item| headers.iter().map(|h| item.get(h.as_str()).map(compact).unwrap_or_default()).collect())
+                                    .map(|item| {
+                                        headers
+                                            .iter()
+                                            .map(|h| {
+                                                item.get(h.as_str())
+                                                    .map(compact)
+                                                    .unwrap_or_default()
+                                            })
+                                            .collect()
+                                    })
                                     .collect(),
                                 headers,
                                 notes: Vec::new(),
                                 total: items.len(),
                             });
                         }
-                        Value::Array(items) => detail.push(Detail::Code(label, items.iter().take(MAX_SUBROWS).map(compact).collect::<Vec<_>>().join("\n"))),
+                        Value::Array(items) => detail.push(Detail::Code(
+                            label,
+                            items
+                                .iter()
+                                .take(MAX_SUBROWS)
+                                .map(compact)
+                                .collect::<Vec<_>>()
+                                .join("\n"),
+                        )),
                         Value::Object(_) => detail.push(Detail::Code(label, compact(value))),
                         other => detail.push(Detail::Prop(label, compact(other))),
                     }
@@ -774,7 +943,11 @@ fn claims_table(claims: &[Claim]) -> Table {
         .iter()
         .map(|c| {
             let subject = c.subject.as_ref();
-            let kind = subject.and_then(|s| s.get("kind")).and_then(Value::as_str).unwrap_or("").to_string();
+            let kind = subject
+                .and_then(|s| s.get("kind"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let owner = subject
                 .and_then(|s| s.get("owner").or_else(|| s.get("name")))
                 .and_then(Value::as_str)
@@ -789,7 +962,10 @@ fn claims_table(claims: &[Claim]) -> Table {
                 detail.push(Detail::Table {
                     title: "Subject".into(),
                     headers: vec!["field".into(), "value".into()],
-                    rows: map.iter().map(|(k, v)| vec![k.replace('_', " "), compact(v)]).collect(),
+                    rows: map
+                        .iter()
+                        .map(|(k, v)| vec![k.replace('_', " "), compact(v)])
+                        .collect(),
                     notes: Vec::new(),
                     total: map.len(),
                 });
@@ -824,7 +1000,14 @@ fn conflicts_table(conflicts: &[Conflict]) -> Table {
         .iter()
         .map(|c| {
             let mut detail = props(vec![
-                ("State", if c.resolved { "resolved".into() } else { "open".into() }),
+                (
+                    "State",
+                    if c.resolved {
+                        "resolved".into()
+                    } else {
+                        "open".into()
+                    },
+                ),
                 ("Conflict", text(&c.id)),
             ]);
             if let Some(reason) = &c.reason {
@@ -845,7 +1028,11 @@ fn conflicts_table(conflicts: &[Conflict]) -> Table {
                 search: String::new(),
                 name: text(&c.reason),
                 cols: [
-                    if c.resolved { "resolved".into() } else { "open".into() },
+                    if c.resolved {
+                        "resolved".into()
+                    } else {
+                        "open".into()
+                    },
                     c.claim_ids.len().to_string(),
                     String::new(),
                 ],
@@ -870,7 +1057,12 @@ pub fn load(path: &Path) -> anyhow::Result<Summary> {
     let names: HashMap<&str, &str> = ir
         .symbols
         .iter()
-        .filter_map(|s| Some((s.id.as_deref()?, s.demangled.as_deref().or(s.mangled.as_deref())?)))
+        .filter_map(|s| {
+            Some((
+                s.id.as_deref()?,
+                s.demangled.as_deref().or(s.mangled.as_deref())?,
+            ))
+        })
         .collect();
     let tables = vec![
         symbols_table(&ir.symbols),
@@ -883,7 +1075,12 @@ pub fn load(path: &Path) -> anyhow::Result<Summary> {
             "No classes were recovered.",
             &ir.classes,
         ),
-        generic_table("Enums", "Enumerations with their named values.", "No enums were recovered.", &ir.enums),
+        generic_table(
+            "Enums",
+            "Enumerations with their named values.",
+            "No enums were recovered.",
+            &ir.enums,
+        ),
         claims_table(&ir.claims),
         conflicts_table(&ir.conflicts),
     ];

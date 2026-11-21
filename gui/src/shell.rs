@@ -10,10 +10,10 @@
 //! inspector shows whatever row is selected.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::Sizable as _;
@@ -124,10 +124,13 @@ enum Tab {
 
 const GUIDE_DOC: usize = usize::MAX;
 
-gpui_kit::actions!(windissect, [
-    /// Open the "Go to" palette: jump to any row of the loaded IR by name.
-    GoTo
-]);
+gpui_kit::actions!(
+    windissect,
+    [
+        /// Open the "Go to" palette: jump to any row of the loaded IR by name.
+        GoTo
+    ]
+);
 
 /// Rows the palette shows at most.
 const GOTO_LIMIT: usize = 50;
@@ -143,9 +146,21 @@ Nothing here is guessed: the IR keeps verified facts apart from candidates, and 
 
 const TOOLS: [(&str, &str, &str); 7] = [
     ("Verify", "shield-check", "re-check the IR's invariants"),
-    ("C++ headers", "file-code", "verified ABI + opt-in candidates"),
-    ("C symbol table", "hash", "mangled name \u{2192} RVA, build-pinned"),
-    ("Evidence", "layers", "verified claims apart from candidates"),
+    (
+        "C++ headers",
+        "file-code",
+        "verified ABI + opt-in candidates",
+    ),
+    (
+        "C symbol table",
+        "hash",
+        "mangled name \u{2192} RVA, build-pinned",
+    ),
+    (
+        "Evidence",
+        "layers",
+        "verified claims apart from candidates",
+    ),
     ("Rust bindings", "boxes", "a buildable FFI crate"),
     ("Docs", "book-open", "markdown reference for this module"),
     ("Strings", "binary", "printable ASCII and UTF-16"),
@@ -218,7 +233,10 @@ impl Shell {
         let engine = Engine::locate();
         let dll_query = cx.new(|cx| InputState::new(window, cx).placeholder("Filter Windows DLLs"));
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search this section"));
-        let goto_query = cx.new(|cx| InputState::new(window, cx).placeholder("Go to a symbol, function, type, vtable\u{2026}"));
+        let goto_query = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Go to a symbol, function, type, vtable\u{2026}")
+        });
         let subscriptions = vec![
             cx.subscribe_in(&goto_query, window, |this, _, event: &InputEvent, _, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -286,7 +304,11 @@ impl Shell {
         }
         shell.start_presence();
         // `windissect-gui <file>`: open it straight away (also how "Open with" arrives).
-        if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from).filter(|p| p.exists()) {
+        if let Some(path) = std::env::args_os()
+            .nth(1)
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+        {
             shell.open(path, cx);
         }
         shell
@@ -328,10 +350,14 @@ impl Shell {
         }
         if let Some(Tab::Doc(d)) = self.tabs.get(index).copied() {
             let docs = &self.docs;
-            self.doc_cache.entry(d).or_insert_with(|| match docs.get(d) {
-                Some(doc) => std::fs::read_to_string(&doc.path).unwrap_or_default().into(),
-                None => GUIDE.into(),
-            });
+            self.doc_cache
+                .entry(d)
+                .or_insert_with(|| match docs.get(d) {
+                    Some(doc) => std::fs::read_to_string(&doc.path)
+                        .unwrap_or_default()
+                        .into(),
+                    None => GUIDE.into(),
+                });
         }
         self.refilter(cx);
         cx.notify();
@@ -342,7 +368,11 @@ impl Shell {
             return;
         }
         self.tabs.remove(index);
-        let next = if self.active >= index { self.active.saturating_sub(1) } else { self.active };
+        let next = if self.active >= index {
+            self.active.saturating_sub(1)
+        } else {
+            self.active
+        };
         self.active = usize::MAX;
         self.activate(next.min(self.tabs.len() - 1), cx);
     }
@@ -353,7 +383,10 @@ impl Shell {
         self.list_system = on;
         if on && self.system_dlls.is_empty() {
             cx.spawn(async move |this, cx| {
-                let dlls = cx.background_executor().spawn(async { Engine::system_dlls() }).await;
+                let dlls = cx
+                    .background_executor()
+                    .spawn(async { Engine::system_dlls() })
+                    .await;
                 let _ = this.update(cx, |this, cx| {
                     this.system_dlls = Arc::new(dlls);
                     this.refilter_dlls(cx);
@@ -412,7 +445,10 @@ impl Shell {
                 let engine = self.engine.clone();
                 let path = module.path.clone();
                 cx.spawn(async move |this, cx| {
-                    let info = cx.background_executor().spawn(async move { engine.pdb_info(&path) }).await;
+                    let info = cx
+                        .background_executor()
+                        .spawn(async move { engine.pdb_info(&path) })
+                        .await;
                     let _ = this.update(cx, |this, cx| {
                         match info {
                             Some(info) if info.key.is_some() => this.stage = Stage::AskPdb(info),
@@ -563,7 +599,8 @@ impl Shell {
 
     /// Rows of the active section whose name or columns contain the query.
     fn refilter(&mut self, cx: &mut Context<Self>) {
-        let (Stage::Ready(summary, _), Some(section)) = (&self.stage, self.current_section()) else {
+        let (Stage::Ready(summary, _), Some(section)) = (&self.stage, self.current_section())
+        else {
             return;
         };
         let Some(table) = summary.tables.get(section) else {
@@ -578,11 +615,17 @@ impl Shell {
                 query.is_empty()
                     || row.name.to_ascii_lowercase().contains(&query)
                     || row.search.to_ascii_lowercase().contains(&query)
-                    || row.cols.iter().any(|c| c.to_ascii_lowercase().contains(&query))
+                    || row
+                        .cols
+                        .iter()
+                        .any(|c| c.to_ascii_lowercase().contains(&query))
             })
             .map(|(i, _)| i)
             .collect();
-        if self.selected.is_some_and(|sel| !self.filtered.contains(&sel)) {
+        if self
+            .selected
+            .is_some_and(|sel| !self.filtered.contains(&sel))
+        {
             self.selected = None;
         }
         cx.notify();
@@ -610,9 +653,9 @@ impl Shell {
         let cancel = self.begin_job(cx);
         let job_cancel = cancel.clone();
         cx.spawn(async move |this, cx| {
-            let job = cx
-                .background_executor()
-                .spawn(async move { run_tool(&engine, label, &ir_path, &module, &tx, &job_cancel) });
+            let job = cx.background_executor().spawn(async move {
+                run_tool(&engine, label, &ir_path, &module, &tx, &job_cancel)
+            });
             Self::pump(&this, rx, cx).await;
             let (ok, out) = job.await;
             let _ = this.update(cx, |this, cx| {
@@ -621,7 +664,15 @@ impl Shell {
                 if cancelled {
                     this.note(format!("\u{2717} {label} cancelled"));
                 } else if let Some(out) = out {
-                    this.note(format!("{} {}", if ok { "\u{2713} wrote" } else { "\u{2717} failed:" }, out.display()));
+                    this.note(format!(
+                        "{} {}",
+                        if ok {
+                            "\u{2713} wrote"
+                        } else {
+                            "\u{2717} failed:"
+                        },
+                        out.display()
+                    ));
                 } else if !ok {
                     this.note(format!("\u{2717} {label} failed"));
                 }
@@ -634,12 +685,20 @@ impl Shell {
     fn copy(&mut self, text: String, cx: &mut Context<Self>) {
         let preview: String = text.chars().take(48).collect();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.flash = Some(format!("Copied {preview}{}", if preview.len() >= 48 { "\u{2026}" } else { "" }).into());
+        self.flash = Some(
+            format!(
+                "Copied {preview}{}",
+                if preview.len() >= 48 { "\u{2026}" } else { "" }
+            )
+            .into(),
+        );
         self.flash_generation += 1;
         let generation = self.flash_generation;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_millis(1800)).await;
+            cx.background_executor()
+                .timer(Duration::from_millis(1800))
+                .await;
             let _ = this.update(cx, |this, cx| {
                 if this.flash_generation == generation {
                     this.flash = None;
@@ -658,7 +717,8 @@ impl Shell {
             if self.module.is_none() {
                 self.set_list_system(true, cx);
                 self.activate(0, cx);
-                self.dll_query.update(cx, |state, cx| state.focus(window, cx));
+                self.dll_query
+                    .update(cx, |state, cx| state.focus(window, cx));
             }
             return;
         }
@@ -715,7 +775,11 @@ impl Shell {
             }
         }
         scored.sort_unstable();
-        self.goto_results = scored.into_iter().take(GOTO_LIMIT).map(|(_, _, s, r)| (s, r)).collect();
+        self.goto_results = scored
+            .into_iter()
+            .take(GOTO_LIMIT)
+            .map(|(_, _, s, r)| (s, r))
+            .collect();
         cx.notify();
     }
 
@@ -736,7 +800,8 @@ impl Shell {
         self.goto_open = false;
         self.open_tab(Tab::Section(section), cx);
         if !self.filtered.contains(&row) {
-            self.query.update(cx, |state, cx| state.set_value("", window, cx));
+            self.query
+                .update(cx, |state, cx| state.set_value("", window, cx));
             self.refilter(cx);
         }
         self.select_row(row, cx);
@@ -751,7 +816,8 @@ impl Shell {
         self.selected = Some(row);
         self.inspector_open = true;
         if let Some(position) = self.filtered.iter().position(|&r| r == row) {
-            self.section_scroll.scroll_to_item(position, ScrollStrategy::Nearest);
+            self.section_scroll
+                .scroll_to_item(position, ScrollStrategy::Nearest);
         }
         cx.notify();
     }
@@ -762,7 +828,9 @@ impl Shell {
         if len == 0 {
             return;
         }
-        let at = self.selected.and_then(|sel| self.filtered.iter().position(|&r| r == sel));
+        let at = self
+            .selected
+            .and_then(|sel| self.filtered.iter().position(|&r| r == sel));
         let last = len - 1;
         let next = match (event.keystroke.key.as_str(), at) {
             ("down", None) | ("home", _) => 0,
@@ -813,10 +881,17 @@ impl Shell {
         let names = self.discord.show_names;
         let tab = self.tabs.get(self.active).copied().unwrap_or(Tab::Start);
         if let Tab::Doc(d) = tab {
-            let title = self.docs.get(d).map_or("Start here".to_string(), |doc| doc.title.clone());
+            let title = self
+                .docs
+                .get(d)
+                .map_or("Start here".to_string(), |doc| doc.title.clone());
             return discord::Activity {
                 details: "Reading docs".into(),
-                state: if names { title } else { "Windissect documentation".into() },
+                state: if names {
+                    title
+                } else {
+                    "Windissect documentation".into()
+                },
                 start: self.opened_at,
                 small_image: Some("docs".into()),
                 small_text: Some("Docs".into()),
@@ -831,7 +906,11 @@ impl Shell {
                 small_text: None,
             };
         };
-        let details = if names { format!("Inspecting {}", module.name) } else { "Inspecting a module".into() };
+        let details = if names {
+            format!("Inspecting {}", module.name)
+        } else {
+            "Inspecting a module".into()
+        };
         let (state, small) = match &self.stage {
             Stage::Ready(summary, _) => {
                 let section = self.current_section().and_then(|i| summary.tables.get(i));
@@ -850,7 +929,11 @@ impl Shell {
                     }
                     None => {
                         let symbols = summary.tables.first().map_or(0, |t| t.rows.len());
-                        let pdb = if summary.binary.pdb_name.is_some() { "PDB" } else { "exports only" };
+                        let pdb = if summary.binary.pdb_name.is_some() {
+                            "PDB"
+                        } else {
+                            "exports only"
+                        };
                         (format!("{symbols} symbols \u{b7} {pdb}"), None)
                     }
                 }
@@ -902,7 +985,9 @@ impl Shell {
                                 this.engine.workspace = dir.clone();
                                 this.note(format!("workspace: {} (saved)", dir.display()));
                             }
-                            Err(err) => this.note(format!("\u{2717} could not save the workspace setting: {err}")),
+                            Err(err) => this.note(format!(
+                                "\u{2717} could not save the workspace setting: {err}"
+                            )),
                         }
                         cx.notify();
                     });
@@ -913,7 +998,9 @@ impl Shell {
     }
 
     fn open_workspace(&mut self) {
-        let _ = std::process::Command::new("explorer.exe").arg(&self.engine.workspace).spawn();
+        let _ = std::process::Command::new("explorer.exe")
+            .arg(&self.engine.workspace)
+            .spawn();
     }
 }
 
@@ -927,7 +1014,9 @@ enum Event {
 /// download, extraction and verification as one command.
 fn step_from_line(line: &str) -> Option<&'static str> {
     let l = line.to_ascii_lowercase();
-    if l.contains("pdb") && (l.contains("download") || l.contains("fetch") || l.contains("symbol server")) {
+    if l.contains("pdb")
+        && (l.contains("download") || l.contains("fetch") || l.contains("symbol server"))
+    {
         Some("Downloading PDB\u{2026}")
     } else if l.contains("verif") {
         Some("Verifying\u{2026}")
@@ -940,8 +1029,18 @@ fn step_from_line(line: &str) -> Option<&'static str> {
 
 /// Runs one command, forwarding its output as lines. Blocking; runs on a
 /// background thread. Ends the forwarding before returning.
-fn stream_step(engine: &Engine, program: &Path, args: &[String], events: &async_channel::Sender<Event>, cancel: &Cancel, cap: Option<usize>) -> bool {
-    let name = program.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+fn stream_step(
+    engine: &Engine,
+    program: &Path,
+    args: &[String],
+    events: &async_channel::Sender<Event>,
+    cancel: &Cancel,
+    cap: Option<usize>,
+) -> bool {
+    let name = program
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let _ = events.send_blocking(Event::Line(format!("$ {name} {}", args.join(" "))));
     let (lines_tx, lines_rx) = async_channel::unbounded::<String>();
     let forward_events = events.clone();
@@ -955,7 +1054,10 @@ fn stream_step(engine: &Engine, program: &Path, args: &[String], events: &async_
             }
         }
         if let Some(c) = cap.filter(|c| seen > *c) {
-            let _ = forward_events.send_blocking(Event::Line(format!("\u{2026} {} more lines not shown", seen - c)));
+            let _ = forward_events.send_blocking(Event::Line(format!(
+                "\u{2026} {} more lines not shown",
+                seen - c
+            )));
         }
     });
     let ok = engine.stream(program, args, &lines_tx, cancel);
@@ -966,7 +1068,13 @@ fn stream_step(engine: &Engine, program: &Path, args: &[String], events: &async_
 
 /// Runs the analysis for one module on a background thread, streaming its
 /// output. Returns the loaded IR summary or why it failed.
-fn run_pipeline(engine: &Engine, module: &Module, with_pdb: bool, events: &async_channel::Sender<Event>, cancel: &Cancel) -> Result<(Summary, PathBuf), String> {
+fn run_pipeline(
+    engine: &Engine,
+    module: &Module,
+    with_pdb: bool,
+    events: &async_channel::Sender<Event>,
+    cancel: &Cancel,
+) -> Result<(Summary, PathBuf), String> {
     let ir_path = match module.kind {
         Kind::Ir => module.path.clone(),
         Kind::Electron => engine.ir_path(&format!("{}-electron", module.stem)),
@@ -975,7 +1083,9 @@ fn run_pipeline(engine: &Engine, module: &Module, with_pdb: bool, events: &async
     let steps: Vec<(&'static str, PathBuf, Vec<String>)> = match (module.kind, with_pdb) {
         (Kind::Pe, true) => {
             let Some(fleet) = engine.fleet.clone() else {
-                return Err("PDB download needs the fleet driver from a Windissect checkout".into());
+                return Err(
+                    "PDB download needs the fleet driver from a Windissect checkout".into(),
+                );
             };
             vec![(
                 "Downloading PDB\u{2026}",
@@ -994,20 +1104,43 @@ fn run_pipeline(engine: &Engine, module: &Module, with_pdb: bool, events: &async
             (
                 "Extracting\u{2026}",
                 engine.cli.clone(),
-                vec!["extract".into(), module.path.display().to_string(), "--out".into(), ir_path.display().to_string()],
+                vec![
+                    "extract".into(),
+                    module.path.display().to_string(),
+                    "--out".into(),
+                    ir_path.display().to_string(),
+                ],
             ),
-            ("Verifying\u{2026}", engine.cli.clone(), vec!["verify".into(), "--ir".into(), ir_path.display().to_string()]),
+            (
+                "Verifying\u{2026}",
+                engine.cli.clone(),
+                vec![
+                    "verify".into(),
+                    "--ir".into(),
+                    ir_path.display().to_string(),
+                ],
+            ),
         ],
         (Kind::Winmd, _) => vec![(
             "Reading WinRT metadata\u{2026}",
             engine.cli.clone(),
-            vec!["winmd".into(), module.path.display().to_string(), "--out".into(), ir_path.display().to_string()],
+            vec![
+                "winmd".into(),
+                module.path.display().to_string(),
+                "--out".into(),
+                ir_path.display().to_string(),
+            ],
         )],
         (Kind::Ir, _) => Vec::new(),
         (Kind::Electron, _) => vec![(
             "Reading the Electron app\u{2026}",
             engine.cli.clone(),
-            vec!["electron".into(), module.path.display().to_string(), "--out".into(), ir_path.display().to_string()],
+            vec![
+                "electron".into(),
+                module.path.display().to_string(),
+                "--out".into(),
+                ir_path.display().to_string(),
+            ],
         )],
     };
     for (step, program, args) in steps {
@@ -1019,8 +1152,14 @@ fn run_pipeline(engine: &Engine, module: &Module, with_pdb: bool, events: &async
             if cancel.is_cancelled() {
                 return Err("cancelled".into());
             }
-            let name = program.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            return Err(format!("{name} {} failed; see Output", args.first().cloned().unwrap_or_default()));
+            let name = program
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            return Err(format!(
+                "{name} {} failed; see Output",
+                args.first().cloned().unwrap_or_default()
+            ));
         }
     }
     if cancel.is_cancelled() {
@@ -1034,12 +1173,25 @@ fn run_pipeline(engine: &Engine, module: &Module, with_pdb: bool, events: &async
 
 /// Runs one tool on the loaded IR, streaming its output. Returns whether it
 /// succeeded and the folder it wrote, if it writes one.
-fn run_tool(engine: &Engine, label: &str, ir_path: &Path, module: &Module, events: &async_channel::Sender<Event>, cancel: &Cancel) -> (bool, Option<PathBuf>) {
+fn run_tool(
+    engine: &Engine,
+    label: &str,
+    ir_path: &Path,
+    module: &Module,
+    events: &async_channel::Sender<Event>,
+    cancel: &Cancel,
+) -> (bool, Option<PathBuf>) {
     let ir = ir_path.display().to_string();
     let (command, out): (&str, Option<PathBuf>) = match label {
-        "C++ headers" => ("emit-headers", Some(engine.out_dir("headers", &module.stem))),
+        "C++ headers" => (
+            "emit-headers",
+            Some(engine.out_dir("headers", &module.stem)),
+        ),
         "C symbol table" => ("emit-syms", Some(engine.out_dir("syms", &module.stem))),
-        "Evidence" => ("emit-evidence", Some(engine.out_dir("evidence", &module.stem))),
+        "Evidence" => (
+            "emit-evidence",
+            Some(engine.out_dir("evidence", &module.stem)),
+        ),
         "Rust bindings" => ("emit-rust", Some(engine.out_dir("rust", &module.stem))),
         "Docs" => ("doc", Some(engine.out_dir("docs", &module.stem))),
         "Verify" => ("verify", None),
@@ -1055,11 +1207,23 @@ fn run_tool(engine: &Engine, label: &str, ir_path: &Path, module: &Module, event
         _ => "Writing\u{2026}",
     }));
     let (args, cap): (Vec<String>, Option<usize>) = match (&out, command) {
-        (_, "strings") => (vec!["strings".into(), module.path.display().to_string()], Some(400)),
+        (_, "strings") => (
+            vec!["strings".into(), module.path.display().to_string()],
+            Some(400),
+        ),
         (None, _) => (vec![command.into(), "--ir".into(), ir], None),
         (Some(dir), _) => {
             let _ = std::fs::create_dir_all(dir);
-            (vec![command.into(), "--ir".into(), ir, "--out".into(), dir.display().to_string()], None)
+            (
+                vec![
+                    command.into(),
+                    "--ir".into(),
+                    ir,
+                    "--out".into(),
+                    dir.display().to_string(),
+                ],
+                None,
+            )
         }
     };
     let ok = stream_step(engine, &engine.cli, &args, events, cancel, cap);
@@ -1069,7 +1233,11 @@ fn run_tool(engine: &Engine, label: &str, ir_path: &Path, module: &Module, event
 // ---- rendering ---------------------------------------------------------------
 
 fn icon(name: &str, color: u32) -> Svg {
-    svg().path(assets::icon(name)).size(px(15.)).flex_shrink_0().text_color(rgb(color))
+    svg()
+        .path(assets::icon(name))
+        .size(px(15.))
+        .flex_shrink_0()
+        .text_color(rgb(color))
 }
 
 fn caption(text: impl Into<SharedString>) -> Div {
@@ -1086,7 +1254,14 @@ fn tone_color(tone: Tone) -> u32 {
 }
 
 /// A sidebar row: icon, label, optional right-hand text.
-fn side_row(id: impl Into<ElementId>, glyph: &str, text: impl Into<SharedString>, right: String, active: bool, enabled: bool) -> Stateful<Div> {
+fn side_row(
+    id: impl Into<ElementId>,
+    glyph: &str,
+    text: impl Into<SharedString>,
+    right: String,
+    active: bool,
+    enabled: bool,
+) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(26.))
@@ -1105,12 +1280,29 @@ fn side_row(id: impl Into<ElementId>, glyph: &str, text: impl Into<SharedString>
             MUTED
         }))
         .when(active, |d| d.bg(rgb(SELECT)))
-        .when(enabled && !active, |d| d.hover(|s| s.bg(rgb(HOVER)).text_color(rgb(TEXT))))
+        .when(enabled && !active, |d| {
+            d.hover(|s| s.bg(rgb(HOVER)).text_color(rgb(TEXT)))
+        })
         .when(enabled, |d| d.cursor_pointer())
-        .child(icon(glyph, if active { ACCENT } else if enabled { MUTED } else { FAINT }))
+        .child(icon(
+            glyph,
+            if active {
+                ACCENT
+            } else if enabled {
+                MUTED
+            } else {
+                FAINT
+            },
+        ))
         .child(div().flex_1().min_w_0().truncate().child(text.into()))
         .when(!right.is_empty(), |d| {
-            d.child(div().font_family(MONO).text_xs().text_color(rgb(FAINT)).child(right))
+            d.child(
+                div()
+                    .font_family(MONO)
+                    .text_xs()
+                    .text_color(rgb(FAINT))
+                    .child(right),
+            )
         })
 }
 
@@ -1129,7 +1321,11 @@ fn panel_header(title: &'static str) -> Div {
 
 impl Shell {
     fn render_activity_bar(&mut self, cx: &mut Context<Self>) -> Div {
-        let item = |cx: &mut Context<Self>, id: &'static str, glyph: &'static str, activity: Activity, active: bool| {
+        let item = |cx: &mut Context<Self>,
+                    id: &'static str,
+                    glyph: &'static str,
+                    activity: Activity,
+                    active: bool| {
             div()
                 .id(id)
                 .size(px(44.))
@@ -1139,7 +1335,12 @@ impl Shell {
                 .border_l_2()
                 .border_color(rgb(if active { ACCENT } else { CHROME }))
                 .cursor_pointer()
-                .child(svg().path(assets::icon(glyph)).size(px(20.)).text_color(rgb(if active { TEXT } else { FAINT })))
+                .child(
+                    svg()
+                        .path(assets::icon(glyph))
+                        .size(px(20.))
+                        .text_color(rgb(if active { TEXT } else { FAINT })),
+                )
                 .hover(|s| s.bg(rgb(RAISED)))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.activity = activity;
@@ -1161,11 +1362,34 @@ impl Shell {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(svg().path(assets::icon("windissect-mark")).size(px(24.)).text_color(rgb(MARK))),
+                    .child(
+                        svg()
+                            .path(assets::icon("windissect-mark"))
+                            .size(px(24.))
+                            .text_color(rgb(MARK)),
+                    ),
             )
-            .child(item(cx, "act-module", "package", Activity::Module, current == Activity::Module))
-            .child(item(cx, "act-docs", "book-open", Activity::Docs, current == Activity::Docs))
-            .child(item(cx, "act-tools", "wrench", Activity::Tools, current == Activity::Tools))
+            .child(item(
+                cx,
+                "act-module",
+                "package",
+                Activity::Module,
+                current == Activity::Module,
+            ))
+            .child(item(
+                cx,
+                "act-docs",
+                "book-open",
+                Activity::Docs,
+                current == Activity::Docs,
+            ))
+            .child(item(
+                cx,
+                "act-tools",
+                "wrench",
+                Activity::Tools,
+                current == Activity::Tools,
+            ))
     }
 
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1195,31 +1419,60 @@ impl Shell {
         let mut list = div().flex().flex_col().gap_0p5();
         list = list
             .child(
-                side_row("open-file", "upload", "Open file\u{2026}", String::new(), false, !self.busy)
-                    .on_click(cx.listener(|this, _, _, cx| this.pick_file(cx))),
+                side_row(
+                    "open-file",
+                    "upload",
+                    "Open file\u{2026}",
+                    String::new(),
+                    false,
+                    !self.busy,
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.pick_file(cx))),
             )
             .child(
-                side_row("system-dlls", "cpu", "Windows DLLs", String::new(), false, !self.busy).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.close_module(cx);
-                        this.set_list_system(true, cx);
-                    },
-                )),
+                side_row(
+                    "system-dlls",
+                    "cpu",
+                    "Windows DLLs",
+                    String::new(),
+                    false,
+                    !self.busy,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.close_module(cx);
+                    this.set_list_system(true, cx);
+                })),
             );
         let Some(module) = self.module.clone() else {
             return list;
         };
         list = list.child(div().h(px(10.))).child(
-            side_row("module", "package", module.name.clone(), String::new(), self.tabs.get(self.active) == Some(&Tab::Start), true)
-                .on_click(cx.listener(|this, _, _, cx| this.activate(0, cx))),
+            side_row(
+                "module",
+                "package",
+                module.name.clone(),
+                String::new(),
+                self.tabs.get(self.active) == Some(&Tab::Start),
+                true,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.activate(0, cx))),
         );
         match &self.stage {
             Stage::Ready(summary, _) => {
                 let current = self.current_section();
                 for (i, table) in summary.tables.iter().enumerate() {
-                    let row = side_row(("section", i), section_icon(table.title), table.title, table.rows.len().to_string(), current == Some(i), true)
-                        .pl(px(26.))
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_tab(Tab::Section(i), cx)));
+                    let row = side_row(
+                        ("section", i),
+                        section_icon(table.title),
+                        table.title,
+                        table.rows.len().to_string(),
+                        current == Some(i),
+                        true,
+                    )
+                    .pl(px(26.))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.open_tab(Tab::Section(i), cx)),
+                    );
                     list = list.child(row);
                 }
             }
@@ -1227,10 +1480,22 @@ impl Shell {
                 list = list.child(div().pl(px(34.)).py_1().child(caption("working\u{2026}")));
             }
             Stage::AskPdb(_) => {
-                list = list.child(div().pl(px(34.)).py_1().child(caption("waiting: download the PDB?")));
+                list = list.child(
+                    div()
+                        .pl(px(34.))
+                        .py_1()
+                        .child(caption("waiting: download the PDB?")),
+                );
             }
             Stage::Failed(_) => {
-                list = list.child(div().pl(px(34.)).py_1().text_xs().text_color(rgb(BAD)).child("analysis failed"));
+                list = list.child(
+                    div()
+                        .pl(px(34.))
+                        .py_1()
+                        .text_xs()
+                        .text_color(rgb(BAD))
+                        .child("analysis failed"),
+                );
             }
             Stage::Choose => {}
         }
@@ -1240,10 +1505,22 @@ impl Shell {
     fn render_doc_list(&mut self, cx: &mut Context<Self>) -> Div {
         let active = self.tabs.get(self.active).copied();
         let entries = std::iter::once((GUIDE_DOC, "Start here".to_string()))
-            .chain(self.docs.iter().enumerate().map(|(i, d)| (i, d.title.clone())))
+            .chain(
+                self.docs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| (i, d.title.clone())),
+            )
             .map(|(i, title)| {
-                side_row(("doc", i), "file-text", title, String::new(), active == Some(Tab::Doc(i)), true)
-                    .on_click(cx.listener(move |this, _, _, cx| this.open_tab(Tab::Doc(i), cx)))
+                side_row(
+                    ("doc", i),
+                    "file-text",
+                    title,
+                    String::new(),
+                    active == Some(Tab::Doc(i)),
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.open_tab(Tab::Doc(i), cx)))
             })
             .collect::<Vec<_>>();
         div().flex().flex_col().gap_0p5().children(entries)
@@ -1259,8 +1536,9 @@ impl Shell {
                     .flex()
                     .flex_col()
                     .child(
-                        side_row(name, glyph, name, String::new(), false, ready)
-                            .when(ready, |d| d.on_click(cx.listener(move |this, _, _, cx| this.tool(name, cx)))),
+                        side_row(name, glyph, name, String::new(), false, ready).when(ready, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| this.tool(name, cx)))
+                        }),
                     )
                     .child(div().pl(px(34.)).pb_1().child(caption(*hint)))
             })
@@ -1294,30 +1572,59 @@ impl Shell {
                     "discord-names",
                     "file-text",
                     "Show module names",
-                    if self.discord.show_names { "on".into() } else { "off".into() },
+                    if self.discord.show_names {
+                        "on".into()
+                    } else {
+                        "off".into()
+                    },
                     false,
                     self.discord.presence,
                 )
-                .when(self.discord.presence, |d| d.on_click(cx.listener(|this, _, _, cx| this.toggle_presence_names(cx)))),
+                .when(self.discord.presence, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.toggle_presence_names(cx)))
+                }),
             )
             .child(div().h(px(8.)))
             .child(
-                div().pb_2().child(
-                    side_row("open-ws", "folder-open", "Open workspace", String::new(), false, true)
+                div()
+                    .pb_2()
+                    .child(
+                        side_row(
+                            "open-ws",
+                            "folder-open",
+                            "Open workspace",
+                            String::new(),
+                            false,
+                            true,
+                        )
                         .on_click(cx.listener(|this, _, _, _| this.open_workspace())),
-                )
-                .child(
-                    side_row("pick-ws", "folder-open", "Workspace folder\u{2026}", String::new(), false, !self.busy)
+                    )
+                    .child(
+                        side_row(
+                            "pick-ws",
+                            "folder-open",
+                            "Workspace folder\u{2026}",
+                            String::new(),
+                            false,
+                            !self.busy,
+                        )
                         .on_click(cx.listener(|this, _, _, cx| this.pick_workspace(cx))),
-                )
-                .child(
+                    )
+                    .child(
+                        div()
+                            .px_3()
+                            .pt_1()
+                            .child(caption(self.engine.workspace.display().to_string()).truncate()),
+                    ),
+            )
+            .when(!ready, |d| {
+                d.child(
                     div()
                         .px_3()
-                        .pt_1()
-                        .child(caption(self.engine.workspace.display().to_string()).truncate()),
-                ),
-            )
-            .when(!ready, |d| d.child(div().px_3().pb_3().child(caption("Tools run on an analysed module."))))
+                        .pb_3()
+                        .child(caption("Tools run on an analysed module.")),
+                )
+            })
     }
 
     fn render_tab_strip(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1333,14 +1640,24 @@ impl Shell {
             .map(|(i, tab)| {
                 let active = i == self.active;
                 let (glyph, title): (&str, String) = match tab {
-                    Tab::Start => ("package", self.module.as_ref().map_or("Start".into(), |m| m.name.clone())),
+                    Tab::Start => (
+                        "package",
+                        self.module
+                            .as_ref()
+                            .map_or("Start".into(), |m| m.name.clone()),
+                    ),
                     Tab::Section(s) => {
-                        let title = summary.as_ref().and_then(|x| x.tables.get(s)).map_or("", |t| t.title);
+                        let title = summary
+                            .as_ref()
+                            .and_then(|x| x.tables.get(s))
+                            .map_or("", |t| t.title);
                         (section_icon(title), title.to_string())
                     }
                     Tab::Doc(d) => (
                         "file-text",
-                        self.docs.get(d).map_or("Start here".into(), |doc| doc.title.clone()),
+                        self.docs
+                            .get(d)
+                            .map_or("Start here".into(), |doc| doc.title.clone()),
                     ),
                 };
                 div()
@@ -1366,7 +1683,12 @@ impl Shell {
                                 .id(("close", i))
                                 .rounded(px(3.))
                                 .hover(|s| s.bg(rgb(HOVER)))
-                                .child(svg().path(assets::icon("x")).size(px(12.)).text_color(rgb(FAINT)))
+                                .child(
+                                    svg()
+                                        .path(assets::icon("x"))
+                                        .size(px(12.))
+                                        .text_color(rgb(FAINT)),
+                                )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     cx.stop_propagation();
                                     this.close_tab(i, cx);
@@ -1399,11 +1721,23 @@ impl Shell {
             .flex()
             .flex_col()
             .gap_1()
-            .child(div().text_2xl().text_color(rgb(TEXT)).child(module.name.clone()))
-            .child(caption(format!("{kind} \u{b7} {} \u{b7} {}", human_size(module.size), module.path.display())));
+            .child(
+                div()
+                    .text_2xl()
+                    .text_color(rgb(TEXT))
+                    .child(module.name.clone()),
+            )
+            .child(caption(format!(
+                "{kind} \u{b7} {} \u{b7} {}",
+                human_size(module.size),
+                module.path.display()
+            )));
         let body: Div = match &self.stage {
             Stage::Choose => div(),
-            Stage::Inspecting => div().text_sm().text_color(rgb(MUTED)).child("Reading the image\u{2026}"),
+            Stage::Inspecting => div()
+                .text_sm()
+                .text_color(rgb(MUTED))
+                .child("Reading the image\u{2026}"),
             Stage::Running(what) => {
                 let step = self.step.clone();
                 let elapsed = self.started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
@@ -1422,14 +1756,24 @@ impl Shell {
                             .child(format!("{what}\u{2026}"))
                             .child(caption(format!("{elapsed}s"))),
                     )
-                    .when_some(step, |d, step| d.child(div().pl(px(15.)).text_xs().text_color(rgb(MUTED)).child(step)))
+                    .when_some(step, |d, step| {
+                        d.child(
+                            div()
+                                .pl(px(15.))
+                                .text_xs()
+                                .text_color(rgb(MUTED))
+                                .child(step),
+                        )
+                    })
                     .child(
                         div().pl(px(15.)).flex().child(
                             Button::new("cancel-run")
                                 .small()
                                 .outline()
                                 .label("Cancel")
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_job(cx))),
+                                .on_click(
+                                    cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_job(cx)),
+                                ),
                         ),
                     )
             }
@@ -1439,10 +1783,14 @@ impl Shell {
                 .gap_3()
                 .child(div().text_sm().text_color(rgb(BAD)).child(err.clone()))
                 .child(
-                    div().flex().child(Button::new("retry")
-                        .small()
-                        .label("Try again, exports only")
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.analyze(false, cx)))),
+                    div().flex().child(
+                        Button::new("retry")
+                            .small()
+                            .label("Try again, exports only")
+                            .on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| this.analyze(false, cx)),
+                            ),
+                    ),
                 ),
             Stage::AskPdb(info) => {
                 let fleet = self.engine.fleet.is_some();
@@ -1504,10 +1852,20 @@ impl Shell {
                 let b = &summary.binary;
                 let facts = [
                     ("Machine", b.machine.clone().unwrap_or_default()),
-                    ("Image size", b.image_size.map(human_size).unwrap_or_default()),
+                    (
+                        "Image size",
+                        b.image_size.map(human_size).unwrap_or_default(),
+                    ),
                     ("PDB", b.pdb_name.clone().unwrap_or_else(|| "none".into())),
                     ("PDB GUID", b.pdb_guid.clone().unwrap_or_default()),
-                    ("Imports", if b.dependencies.is_empty() { "none".into() } else { b.dependencies.join(", ") }),
+                    (
+                        "Imports",
+                        if b.dependencies.is_empty() {
+                            "none".into()
+                        } else {
+                            b.dependencies.join(", ")
+                        },
+                    ),
                 ];
                 let cards = summary
                     .tables
@@ -1527,16 +1885,28 @@ impl Shell {
                             .bg(rgb(CHROME))
                             .cursor_pointer()
                             .hover(|s| s.border_color(rgb(ACCENT)))
-                            .on_click(cx.listener(move |this, _, _, cx| this.open_tab(Tab::Section(i), cx)))
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    this.open_tab(Tab::Section(i), cx)
+                                }),
+                            )
                             .child(
                                 div()
                                     .flex()
                                     .items_center()
                                     .gap_2()
                                     .child(icon(section_icon(table.title), MUTED))
-                                    .child(div().text_sm().text_color(rgb(MUTED)).child(table.title)),
+                                    .child(
+                                        div().text_sm().text_color(rgb(MUTED)).child(table.title),
+                                    ),
                             )
-                            .child(div().text_xl().font_family(MONO).text_color(rgb(TEXT)).child(table.rows.len().to_string()))
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_family(MONO)
+                                    .text_color(rgb(TEXT))
+                                    .child(table.rows.len().to_string()),
+                            )
                     })
                     .collect::<Vec<_>>();
                 div()
@@ -1544,19 +1914,44 @@ impl Shell {
                     .flex_col()
                     .gap_5()
                     .child(
-                        div().flex().flex_col().gap_1().children(facts.into_iter().filter(|(_, v)| !v.is_empty()).map(|(k, v)| {
-                            div()
-                                .flex()
-                                .gap_3()
-                                .text_sm()
-                                .child(div().w(px(90.)).flex_shrink_0().text_color(rgb(FAINT)).child(k))
-                                .child(div().flex_1().min_w_0().font_family(MONO).text_xs().text_color(rgb(TEXT)).child(v))
-                        })),
+                        div().flex().flex_col().gap_1().children(
+                            facts
+                                .into_iter()
+                                .filter(|(_, v)| !v.is_empty())
+                                .map(|(k, v)| {
+                                    div()
+                                        .flex()
+                                        .gap_3()
+                                        .text_sm()
+                                        .child(
+                                            div()
+                                                .w(px(90.))
+                                                .flex_shrink_0()
+                                                .text_color(rgb(FAINT))
+                                                .child(k),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .font_family(MONO)
+                                                .text_xs()
+                                                .text_color(rgb(TEXT))
+                                                .child(v),
+                                        )
+                                }),
+                        ),
                     )
                     .child(div().flex().flex_wrap().gap_2().children(cards))
             }
         };
-        div().flex().flex_col().gap_6().p_6().child(head).child(body)
+        div()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .p_6()
+            .child(head)
+            .child(body)
     }
 
     fn render_chooser(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1573,43 +1968,63 @@ impl Shell {
             .border_dashed()
             .border_color(rgb(LINE))
             .bg(rgb(CHROME))
-            .drag_over::<ExternalPaths>(|style, _, _, _| style.border_color(rgb(ACCENT)).bg(rgb(RAISED)))
+            .drag_over::<ExternalPaths>(|style, _, _, _| {
+                style.border_color(rgb(ACCENT)).bg(rgb(RAISED))
+            })
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 if let Some(path) = paths.paths().first() {
                     this.open(path.clone(), cx);
                 }
             }))
             .child(icon("upload", FAINT))
-            .child(div().text_color(rgb(TEXT)).child("Drop a DLL, EXE, .winmd, Electron app or IR .json"))
             .child(
                 div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("open")
-                            .small()
-                            .outline()
-                            .label("Open file\u{2026}")
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pick_file(cx))),
-                    ),
+                    .text_color(rgb(TEXT))
+                    .child("Drop a DLL, EXE, .winmd, Electron app or IR .json"),
+            )
+            .child(
+                div().flex().gap_2().child(
+                    Button::new("open")
+                        .small()
+                        .outline()
+                        .label("Open file\u{2026}")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pick_file(cx))),
+                ),
             );
         let switch = Switch::new("list-system")
             .checked(self.list_system)
             .label("List Windows DLLs")
-            .on_click(cx.listener(|this, checked: &bool, _, cx| this.set_list_system(*checked, cx)));
+            .on_click(
+                cx.listener(|this, checked: &bool, _, cx| this.set_list_system(*checked, cx)),
+            );
         let brand = div()
             .flex()
             .items_center()
             .gap_3()
-            .child(svg().path(assets::icon("windissect-mark")).size(px(40.)).text_color(rgb(MARK)))
+            .child(
+                svg()
+                    .path(assets::icon("windissect-mark"))
+                    .size(px(40.))
+                    .text_color(rgb(MARK)),
+            )
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .child(div().text_xl().text_color(rgb(TEXT)).child("Windissect"))
-                    .child(caption("Take Windows apart: symbols, types, vtables, proofs.")),
+                    .child(caption(
+                        "Take Windows apart: symbols, types, vtables, proofs.",
+                    )),
             );
-        let mut body = div().flex().flex_col().gap_4().p_6().size_full().child(brand).child(drop_zone).child(switch);
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_6()
+            .size_full()
+            .child(brand)
+            .child(drop_zone)
+            .child(switch);
         if self.list_system {
             let total = self.system_dlls.len();
             let count = self.dll_filtered.len();
@@ -1635,7 +2050,10 @@ impl Shell {
                             cx.processor(move |this, range: Range<usize>, _, cx| {
                                 range
                                     .filter_map(|row| {
-                                        let entry = this.system_dlls.get(*this.dll_filtered.get(row)?)?.clone();
+                                        let entry = this
+                                            .system_dlls
+                                            .get(*this.dll_filtered.get(row)?)?
+                                            .clone();
                                         let path = entry.path.clone();
                                         Some(
                                             div()
@@ -1650,9 +2068,27 @@ impl Shell {
                                                 .hover(|s| s.bg(rgb(HOVER)))
                                                 .cursor_pointer()
                                                 .child(icon("file-code", FAINT))
-                                                .child(div().flex_1().min_w_0().truncate().font_family(MONO).text_xs().text_color(rgb(TEXT)).child(entry.name))
-                                                .child(div().w(px(80.)).flex_shrink_0().text_xs().text_color(rgb(FAINT)).child(human_size(entry.size)))
-                                                .on_click(cx.listener(move |this, _, _, cx| this.open(path.clone(), cx))),
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .truncate()
+                                                        .font_family(MONO)
+                                                        .text_xs()
+                                                        .text_color(rgb(TEXT))
+                                                        .child(entry.name),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(80.))
+                                                        .flex_shrink_0()
+                                                        .text_xs()
+                                                        .text_color(rgb(FAINT))
+                                                        .child(human_size(entry.size)),
+                                                )
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.open(path.clone(), cx)
+                                                })),
                                         )
                                     })
                                     .collect::<Vec<_>>()
@@ -1697,7 +2133,13 @@ impl Shell {
                 .rounded(px(4.))
                 .bg(rgb(RAISED))
                 .child(div().size(px(6.)).rounded_full().bg(rgb(tone_color(tone))))
-                .child(div().font_family(MONO).text_xs().text_color(rgb(TEXT)).child(n.to_string()))
+                .child(
+                    div()
+                        .font_family(MONO)
+                        .text_xs()
+                        .text_color(rgb(TEXT))
+                        .child(n.to_string()),
+                )
                 .child(caption(label))
         };
         let heading = div()
@@ -1716,10 +2158,18 @@ impl Shell {
                     .child(icon(section_icon(table.title), ACCENT))
                     .child(div().text_base().text_color(rgb(TEXT)).child(table.title))
                     .child(div().flex_1())
-                    .when(tally[0] > 0, |d| d.child(chip(Tone::Good, "verified", tally[0])))
-                    .when(tally[1] > 0, |d| d.child(chip(Tone::Neutral, "likely", tally[1])))
-                    .when(tally[2] > 0, |d| d.child(chip(Tone::Weak, "weak", tally[2])))
-                    .when(tally[3] > 0, |d| d.child(chip(Tone::Bad, "conflicting", tally[3]))),
+                    .when(tally[0] > 0, |d| {
+                        d.child(chip(Tone::Good, "verified", tally[0]))
+                    })
+                    .when(tally[1] > 0, |d| {
+                        d.child(chip(Tone::Neutral, "likely", tally[1]))
+                    })
+                    .when(tally[2] > 0, |d| {
+                        d.child(chip(Tone::Weak, "weak", tally[2]))
+                    })
+                    .when(tally[3] > 0, |d| {
+                        d.child(chip(Tone::Bad, "conflicting", tally[3]))
+                    }),
             )
             .child(caption(table.description));
         let toolbar = div()
@@ -1730,7 +2180,11 @@ impl Shell {
             .items_center()
             .gap_3()
             .child(div().w(px(340.)).child(Input::new(&self.query).small()))
-            .child(caption(if count == total { format!("{total} rows") } else { format!("{count} of {total}") }));
+            .child(caption(if count == total {
+                format!("{total} rows")
+            } else {
+                format!("{count} of {total}")
+            }));
         let mut header = div()
             .h(px(26.))
             .flex_shrink_0()
@@ -1742,10 +2196,24 @@ impl Shell {
             .border_y_1()
             .border_color(rgb(LINE))
             .child(div().w(px(6.)).flex_shrink_0())
-            .child(div().flex_1().min_w_0().text_xs().text_color(rgb(FAINT)).child("NAME"));
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xs()
+                    .text_color(rgb(FAINT))
+                    .child("NAME"),
+            );
         for (h, w) in headers.iter().zip(widths) {
             if w > 0. {
-                header = header.child(div().flex_shrink_0().w(px(w)).text_xs().text_color(rgb(FAINT)).child(h.to_uppercase()));
+                header = header.child(
+                    div()
+                        .flex_shrink_0()
+                        .w(px(w))
+                        .text_xs()
+                        .text_color(rgb(FAINT))
+                        .child(h.to_uppercase()),
+                );
             }
         }
         let rows: AnyElement = if total == 0 {
@@ -1763,7 +2231,9 @@ impl Shell {
                 ("rows", section),
                 count,
                 cx.processor(move |this, range: Range<usize>, _, cx| {
-                    let (Stage::Ready(summary, _), Some(section)) = (&this.stage, this.current_section()) else {
+                    let (Stage::Ready(summary, _), Some(section)) =
+                        (&this.stage, this.current_section())
+                    else {
                         return Vec::new();
                     };
                     let Some(table) = summary.tables.get(section) else {
@@ -1786,7 +2256,13 @@ impl Shell {
                                 .cursor_pointer()
                                 .when(selected, |d| d.bg(rgb(SELECT)))
                                 .when(!selected, |d| d.hover(|s| s.bg(rgb(HOVER))))
-                                .child(div().flex_shrink_0().size(px(6.)).rounded_full().bg(rgb(tone_color(item.tone))))
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .size(px(6.))
+                                        .rounded_full()
+                                        .bg(rgb(tone_color(item.tone))),
+                                )
                                 .child(
                                     div()
                                         .flex_1()
@@ -1794,7 +2270,11 @@ impl Shell {
                                         .truncate()
                                         .font_family(MONO)
                                         .text_xs()
-                                        .text_color(rgb(if item.tone == Tone::Weak { MUTED } else { TEXT }))
+                                        .text_color(rgb(if item.tone == Tone::Weak {
+                                            MUTED
+                                        } else {
+                                            TEXT
+                                        }))
                                         .child(item.name.clone()),
                                 );
                             for (i, w) in widths.iter().enumerate() {
@@ -1837,7 +2317,14 @@ impl Shell {
             .track_focus(&self.list_focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| this.list_key(event, cx)))
             .child(rows);
-        div().size_full().flex().flex_col().child(heading).child(toolbar).child(header).child(rows)
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(heading)
+            .child(toolbar)
+            .child(header)
+            .child(rows)
     }
 
     fn render_doc(&mut self, doc: usize) -> Div {
@@ -1849,7 +2336,12 @@ impl Shell {
                 .overflow_y_scroll()
                 .px_8()
                 .py_6()
-                .child(div().max_w(px(860.)).text_sm().child(TextView::markdown(("doc-text", doc), text))),
+                .child(
+                    div()
+                        .max_w(px(860.))
+                        .text_sm()
+                        .child(TextView::markdown(("doc-text", doc), text)),
+                ),
         )
     }
 
@@ -1868,7 +2360,12 @@ impl Shell {
                 .rounded(px(3.))
                 .hover(|s| s.bg(rgb(HOVER)))
                 .cursor_pointer()
-                .child(svg().path(assets::icon("x")).size(px(13.)).text_color(rgb(FAINT)))
+                .child(
+                    svg()
+                        .path(assets::icon("x"))
+                        .size(px(13.))
+                        .text_color(rgb(FAINT)),
+                )
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.inspector_open = false;
                     cx.notify();
@@ -1895,7 +2392,12 @@ impl Shell {
                         .rounded(px(3.))
                         .cursor_pointer()
                         .hover(|s| s.bg(rgb(HOVER)))
-                        .child(svg().path(assets::icon("copy")).size(px(12.)).text_color(rgb(FAINT)))
+                        .child(
+                            svg()
+                                .path(assets::icon("copy"))
+                                .size(px(12.))
+                                .text_color(rgb(FAINT)),
+                        )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
                             this.copy(text.clone(), cx);
@@ -1919,14 +2421,36 @@ impl Shell {
                                     .rounded(px(3.))
                                     .cursor_pointer()
                                     .hover(|s| s.bg(rgb(HOVER)))
-                                    .on_click(cx.listener(move |this, _, _, cx| this.copy(value_copy.clone(), cx)))
-                                    .child(div().w(px(92.)).flex_shrink_0().text_xs().text_color(rgb(FAINT)).child(key.clone()))
-                                    .child(div().flex_1().min_w_0().font_family(MONO).text_xs().text_color(rgb(TEXT)).child(value.clone()))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.copy(value_copy.clone(), cx)
+                                    }))
+                                    .child(
+                                        div()
+                                            .w(px(92.))
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(rgb(FAINT))
+                                            .child(key.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .font_family(MONO)
+                                            .text_xs()
+                                            .text_color(rgb(TEXT))
+                                            .child(value.clone()),
+                                    )
                                     .child(
                                         div()
                                             .invisible()
                                             .group_hover("prop", |s| s.visible())
-                                            .child(svg().path(assets::icon("copy")).size(px(12.)).text_color(rgb(FAINT))),
+                                            .child(
+                                                svg()
+                                                    .path(assets::icon("copy"))
+                                                    .size(px(12.))
+                                                    .text_color(rgb(FAINT)),
+                                            ),
                                     ),
                             );
                         }
@@ -1954,23 +2478,48 @@ impl Shell {
                                             .when(more, |d| {
                                                 d.child(
                                                     div()
-                                                        .id(ElementId::Name(format!("fold-{block}").into()))
+                                                        .id(ElementId::Name(
+                                                            format!("fold-{block}").into(),
+                                                        ))
                                                         .px_1()
                                                         .rounded(px(3.))
                                                         .cursor_pointer()
                                                         .hover(|s| s.bg(rgb(HOVER)))
                                                         .text_xs()
                                                         .text_color(rgb(ACCENT))
-                                                        .child(if open { "show less".to_string() } else if lines.len() > 1 { format!("show all ({} lines)", lines.len()) } else { "show all".to_string() })
-                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                            if !this.expanded.remove(&(block, usize::MAX)) {
-                                                                this.expanded.insert((block, usize::MAX));
-                                                            }
-                                                            cx.notify();
-                                                        })),
+                                                        .child(if open {
+                                                            "show less".to_string()
+                                                        } else if lines.len() > 1 {
+                                                            format!(
+                                                                "show all ({} lines)",
+                                                                lines.len()
+                                                            )
+                                                        } else {
+                                                            "show all".to_string()
+                                                        })
+                                                        .on_click(cx.listener(
+                                                            move |this, _, _, cx| {
+                                                                if !this
+                                                                    .expanded
+                                                                    .remove(&(block, usize::MAX))
+                                                                {
+                                                                    this.expanded.insert((
+                                                                        block,
+                                                                        usize::MAX,
+                                                                    ));
+                                                                }
+                                                                cx.notify();
+                                                            },
+                                                        )),
                                                 )
                                             })
-                                            .child(copy_button(cx, ElementId::Name(format!("copy-fold-{block}").into()), value.clone())),
+                                            .child(copy_button(
+                                                cx,
+                                                ElementId::Name(
+                                                    format!("copy-fold-{block}").into(),
+                                                ),
+                                                value.clone(),
+                                            )),
                                     )
                                     .child(
                                         div()
@@ -2001,7 +2550,13 @@ impl Shell {
                                             .flex()
                                             .items_center()
                                             .child(div().flex_1().child(caption(key.clone())))
-                                            .child(copy_button(cx, ElementId::Name(format!("copy-code-{block}").into()), value.clone())),
+                                            .child(copy_button(
+                                                cx,
+                                                ElementId::Name(
+                                                    format!("copy-code-{block}").into(),
+                                                ),
+                                                value.clone(),
+                                            )),
                                     )
                                     .child(
                                         div()
@@ -2011,11 +2566,19 @@ impl Shell {
                                             .font_family(MONO)
                                             .text_xs()
                                             .text_color(rgb(TEXT))
-                                            .children(value.lines().map(|l| div().child(l.to_string()))),
+                                            .children(
+                                                value.lines().map(|l| div().child(l.to_string())),
+                                            ),
                                     ),
                             );
                         }
-                        Detail::Table { title, headers, rows, notes, total } => {
+                        Detail::Table {
+                            title,
+                            headers,
+                            rows,
+                            notes,
+                            total,
+                        } => {
                             let columns = headers.len().max(1);
                             let head = div()
                                 .flex()
@@ -2062,16 +2625,30 @@ impl Shell {
                                             .gap_2()
                                             .children(cells.iter().enumerate().map(|(i, cell)| {
                                                 div()
-                                                    .when(i + 1 == columns, |d| d.flex_1().min_w_0())
-                                                    .when(i + 1 != columns, |d| d.w(px(58.)).flex_shrink_0())
+                                                    .when(i + 1 == columns, |d| {
+                                                        d.flex_1().min_w_0()
+                                                    })
+                                                    .when(i + 1 != columns, |d| {
+                                                        d.w(px(58.)).flex_shrink_0()
+                                                    })
                                                     .when(!open, |d| d.truncate())
                                                     .font_family(MONO)
                                                     .text_xs()
-                                                    .text_color(rgb(if i == 0 { ACCENT } else { TEXT }))
+                                                    .text_color(rgb(if i == 0 {
+                                                        ACCENT
+                                                    } else {
+                                                        TEXT
+                                                    }))
                                                     .child(cell.clone())
                                             }))
                                             .when(open, |d| {
-                                                d.child(copy_button(cx, ElementId::Name(format!("copy-sub-{block}-{r}").into()), full.clone()))
+                                                d.child(copy_button(
+                                                    cx,
+                                                    ElementId::Name(
+                                                        format!("copy-sub-{block}-{r}").into(),
+                                                    ),
+                                                    full.clone(),
+                                                ))
                                             }),
                                     );
                                 if let Some(note) = note.filter(|n| Some(n) != cells.last()) {
@@ -2082,11 +2659,21 @@ impl Shell {
                                                 .font_family(MONO)
                                                 .text_xs()
                                                 .text_color(rgb(MUTED))
-                                                .children(note.lines().map(|l| div().child(l.to_string()))),
+                                                .children(
+                                                    note.lines()
+                                                        .map(|l| div().child(l.to_string())),
+                                                ),
                                         )
                                     } else {
                                         let first = note.lines().next().unwrap_or("").to_string();
-                                        row.child(div().truncate().font_family(MONO).text_xs().text_color(rgb(FAINT)).child(first))
+                                        row.child(
+                                            div()
+                                                .truncate()
+                                                .font_family(MONO)
+                                                .text_xs()
+                                                .text_color(rgb(FAINT))
+                                                .child(first),
+                                        )
                                     };
                                 }
                                 body_rows.push(row);
@@ -2139,12 +2726,31 @@ impl Shell {
                                     .flex()
                                     .items_center()
                                     .gap_2()
-                                    .child(div().size(px(7.)).rounded_full().bg(rgb(tone_color(item.tone))))
+                                    .child(
+                                        div()
+                                            .size(px(7.))
+                                            .rounded_full()
+                                            .bg(rgb(tone_color(item.tone))),
+                                    )
                                     .child(div().flex_1().child(caption(table.title)))
                                     .child(copy_button(cx, "copy-name".into(), name.clone())),
                             )
-                            .child(div().font_family(MONO).text_base().text_color(rgb(TEXT)).child(heading))
-                            .when_some(subtitle, |d, sub| d.child(div().font_family(MONO).text_xs().text_color(rgb(MUTED)).child(sub))),
+                            .child(
+                                div()
+                                    .font_family(MONO)
+                                    .text_base()
+                                    .text_color(rgb(TEXT))
+                                    .child(heading),
+                            )
+                            .when_some(subtitle, |d, sub| {
+                                d.child(
+                                    div()
+                                        .font_family(MONO)
+                                        .text_xs()
+                                        .text_color(rgb(MUTED))
+                                        .child(sub),
+                                )
+                            }),
                     )
                     .child(props)
                     .child(blocks)
@@ -2175,7 +2781,12 @@ impl Shell {
                 .rounded(px(3.))
                 .hover(|s| s.bg(rgb(HOVER)))
                 .cursor_pointer()
-                .child(svg().path(assets::icon("x")).size(px(13.)).text_color(rgb(FAINT)))
+                .child(
+                    svg()
+                        .path(assets::icon("x"))
+                        .size(px(13.))
+                        .text_color(rgb(FAINT)),
+                )
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.panel_open = false;
                     cx.notify();
@@ -2209,7 +2820,9 @@ impl Shell {
                                 ACCENT
                             } else if l.contains('\u{2713}') || l.contains("[\u{221a}]") {
                                 GOOD
-                            } else if l.contains('\u{2717}') || l.to_ascii_lowercase().contains("error") {
+                            } else if l.contains('\u{2717}')
+                                || l.to_ascii_lowercase().contains("error")
+                            {
                                 BAD
                             } else {
                                 MUTED
@@ -2230,28 +2843,42 @@ impl Shell {
         } else {
             ("idle", FAINT)
         };
-        let module = self.module.as_ref().map(|m| m.name.clone()).unwrap_or_default();
+        let module = self
+            .module
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_default();
         let pdb = match &self.stage {
-            Stage::Ready(summary, _) => summary.binary.pdb_name.clone().unwrap_or_else(|| "no PDB".into()),
+            Stage::Ready(summary, _) => summary
+                .binary
+                .pdb_name
+                .clone()
+                .unwrap_or_else(|| "no PDB".into()),
             _ => String::new(),
         };
-        let toggle = |cx: &mut Context<Self>, id: &'static str, glyph: &'static str, on: bool, which: u8| {
-            div()
-                .id(id)
-                .px_1()
-                .rounded(px(3.))
-                .hover(|s| s.bg(rgb(HOVER)))
-                .cursor_pointer()
-                .child(svg().path(assets::icon(glyph)).size(px(13.)).text_color(rgb(if on { TEXT } else { FAINT })))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if which == 0 {
-                        this.panel_open = !this.panel_open;
-                    } else {
-                        this.inspector_open = !this.inspector_open;
-                    }
-                    cx.notify();
-                }))
-        };
+        let toggle =
+            |cx: &mut Context<Self>, id: &'static str, glyph: &'static str, on: bool, which: u8| {
+                div()
+                    .id(id)
+                    .px_1()
+                    .rounded(px(3.))
+                    .hover(|s| s.bg(rgb(HOVER)))
+                    .cursor_pointer()
+                    .child(
+                        svg()
+                            .path(assets::icon(glyph))
+                            .size(px(13.))
+                            .text_color(rgb(if on { TEXT } else { FAINT })),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if which == 0 {
+                            this.panel_open = !this.panel_open;
+                        } else {
+                            this.inspector_open = !this.inspector_open;
+                        }
+                        cx.notify();
+                    }))
+            };
         div()
             .h(px(24.))
             .flex_shrink_0()
@@ -2264,7 +2891,14 @@ impl Shell {
             .border_color(rgb(LINE))
             .text_xs()
             .text_color(rgb(MUTED))
-            .child(div().flex().items_center().gap_1p5().child(div().size(px(6.)).rounded_full().bg(rgb(color))).child(text))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(div().size(px(6.)).rounded_full().bg(rgb(color)))
+                    .child(text),
+            )
             .when_some(self.flash.clone(), |d, flash| {
                 d.child(
                     div()
@@ -2272,12 +2906,20 @@ impl Shell {
                         .items_center()
                         .gap_1()
                         .text_color(rgb(GOOD))
-                        .child(svg().path(assets::icon("check")).size(px(12.)).text_color(rgb(GOOD)))
+                        .child(
+                            svg()
+                                .path(assets::icon("check"))
+                                .size(px(12.))
+                                .text_color(rgb(GOOD)),
+                        )
                         .child(flash),
                 )
             })
             .when(self.busy, |d| {
-                let step = self.step.clone().unwrap_or_else(|| "Working\u{2026}".into());
+                let step = self
+                    .step
+                    .clone()
+                    .unwrap_or_else(|| "Working\u{2026}".into());
                 let elapsed = self.started.map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 d.child(div().text_color(rgb(TEXT)).child(step))
                     .child(div().font_family(MONO).child(format!("{elapsed}s")))
@@ -2301,11 +2943,37 @@ impl Shell {
                     .flex()
                     .items_center()
                     .gap_1()
-                    .child(div().px_1().rounded(px(3.)).bg(rgb(RAISED)).font_family(MONO).text_color(rgb(MUTED)).child("Ctrl+P"))
-                    .child(div().text_color(rgb(FAINT)).child(if matches!(self.stage, Stage::Ready(..)) { "go to" } else { "find a DLL" })),
+                    .child(
+                        div()
+                            .px_1()
+                            .rounded(px(3.))
+                            .bg(rgb(RAISED))
+                            .font_family(MONO)
+                            .text_color(rgb(MUTED))
+                            .child("Ctrl+P"),
+                    )
+                    .child(div().text_color(rgb(FAINT)).child(
+                        if matches!(self.stage, Stage::Ready(..)) {
+                            "go to"
+                        } else {
+                            "find a DLL"
+                        },
+                    )),
             )
-            .child(toggle(cx, "toggle-output", "panel-bottom", self.panel_open, 0))
-            .child(toggle(cx, "toggle-inspector", "panel-right", self.inspector_open, 1))
+            .child(toggle(
+                cx,
+                "toggle-output",
+                "panel-bottom",
+                self.panel_open,
+                0,
+            ))
+            .child(toggle(
+                cx,
+                "toggle-inspector",
+                "panel-right",
+                self.inspector_open,
+                1,
+            ))
     }
 }
 
@@ -2346,7 +3014,10 @@ impl Shell {
                         .cursor_pointer()
                         .when(active, |d| d.bg(rgb(SELECT)))
                         .when(!active, |d| d.hover(|s| s.bg(rgb(HOVER))))
-                        .child(icon(section_icon(title), if active { ACCENT } else { FAINT }))
+                        .child(icon(
+                            section_icon(title),
+                            if active { ACCENT } else { FAINT },
+                        ))
                         .child(
                             div()
                                 .flex_1()
@@ -2357,7 +3028,13 @@ impl Shell {
                                 .text_color(rgb(TEXT))
                                 .child(item.name.clone()),
                         )
-                        .child(div().flex_shrink_0().text_xs().text_color(rgb(FAINT)).child(title))
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_xs()
+                                .text_color(rgb(FAINT))
+                                .child(title),
+                        )
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.goto_index = i;
                             this.goto_accept(window, cx);
@@ -2366,14 +3043,19 @@ impl Shell {
             })
             .collect::<Vec<_>>();
         let footer = if query_empty {
-            "Type a name. \u{2191}\u{2193} to move \u{b7} Enter to open \u{b7} Esc to close".to_string()
+            "Type a name. \u{2191}\u{2193} to move \u{b7} Enter to open \u{b7} Esc to close"
+                .to_string()
         } else if rows.is_empty() {
             "No matches".to_string()
         } else {
             format!(
                 "{}{} \u{b7} \u{2191}\u{2193} to move \u{b7} Enter to open \u{b7} Esc to close",
                 rows.len(),
-                if rows.len() == GOTO_LIMIT { "+ matches, best first" } else { " matches" }
+                if rows.len() == GOTO_LIMIT {
+                    "+ matches, best first"
+                } else {
+                    " matches"
+                }
             )
         };
         // A dim backdrop over the editor; clicking it closes the palette.

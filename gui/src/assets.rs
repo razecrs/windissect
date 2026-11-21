@@ -12,10 +12,34 @@ macro_rules! icons {
 }
 
 const ICONS: &[(&str, &[u8])] = icons![
-    "folder-open", "book-open", "wrench", "search", "panel-bottom", "panel-right", "file-code", "x",
-    "list-tree", "braces", "layers", "binary", "shield-check", "triangle-alert", "hash", "package",
-    "boxes", "file-text", "upload", "cpu", "download", "chevron-right", "info", "terminal", "copy",
-    "check", "chevron-down", "windissect-mark",
+    "folder-open",
+    "book-open",
+    "wrench",
+    "search",
+    "panel-bottom",
+    "panel-right",
+    "file-code",
+    "x",
+    "list-tree",
+    "braces",
+    "layers",
+    "binary",
+    "shield-check",
+    "triangle-alert",
+    "hash",
+    "package",
+    "boxes",
+    "file-text",
+    "upload",
+    "cpu",
+    "download",
+    "chevron-right",
+    "info",
+    "terminal",
+    "copy",
+    "check",
+    "chevron-down",
+    "windissect-mark",
 ];
 
 pub struct Assets;

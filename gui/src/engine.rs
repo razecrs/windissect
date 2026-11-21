@@ -59,7 +59,10 @@ impl Engine {
     pub fn locate() -> Self {
         let exe = std::env::current_exe().unwrap_or_default();
         let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
-        let repo = exe_dir.ancestors().find(|dir| is_windissect_repo(dir)).map(Path::to_path_buf);
+        let repo = exe_dir
+            .ancestors()
+            .find(|dir| is_windissect_repo(dir))
+            .map(Path::to_path_buf);
 
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Some(bin) = std::env::var_os("WINDISSECT_BIN") {
@@ -142,7 +145,13 @@ impl Engine {
     /// Runs a program without a console window, sending each line of stdout
     /// and stderr to `lines` as it is printed. Returns whether it succeeded;
     /// a cancelled run returns false. `cancel` can kill it from any thread.
-    pub fn stream(&self, program: &Path, args: &[String], lines: &async_channel::Sender<String>, cancel: &Cancel) -> bool {
+    pub fn stream(
+        &self,
+        program: &Path,
+        args: &[String],
+        lines: &async_channel::Sender<String>,
+        cancel: &Cancel,
+    ) -> bool {
         if cancel.is_cancelled() {
             return false;
         }
@@ -162,7 +171,8 @@ impl Engine {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
-                let _ = lines.send_blocking(format!("could not start {}: {err}", program.display()));
+                let _ =
+                    lines.send_blocking(format!("could not start {}: {err}", program.display()));
                 return false;
             }
         };
@@ -197,7 +207,11 @@ impl Engine {
 
     /// Where the module's PDB lives, from `windissect symbols --json` (no network).
     pub fn pdb_info(&self, module: &Path) -> Option<PdbInfo> {
-        let run = self.cli([OsStr::new("symbols"), module.as_os_str(), OsStr::new("--json")]);
+        let run = self.cli([
+            OsStr::new("symbols"),
+            module.as_os_str(),
+            OsStr::new("--json"),
+        ]);
         let start = run.text.find('[')?;
         let reports: Vec<PdbInfo> = serde_json::from_str(&run.text[start..]).ok()?;
         reports.into_iter().next()
@@ -270,7 +284,10 @@ impl Engine {
 
 /// Reads a pipe line by line on its own thread. Output is decoded lossily:
 /// tools may print in the console code page.
-fn forward<R: Read + Send + 'static>(pipe: R, lines: async_channel::Sender<String>) -> std::thread::JoinHandle<()> {
+fn forward<R: Read + Send + 'static>(
+    pipe: R,
+    lines: async_channel::Sender<String>,
+) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut reader = BufReader::new(pipe);
         let mut buf = Vec::new();
@@ -279,7 +296,9 @@ fn forward<R: Read + Send + 'static>(pipe: R, lines: async_channel::Sender<Strin
             match reader.read_until(b'\n', &mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
-                    let line = String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']).to_string();
+                    let line = String::from_utf8_lossy(&buf)
+                        .trim_end_matches(['\r', '\n'])
+                        .to_string();
                     if lines.send_blocking(line).is_err() {
                         break;
                     }
@@ -358,7 +377,8 @@ impl Cancel {
 }
 
 fn settings_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("Windissect").join("settings.json"))
+    std::env::var_os("APPDATA")
+        .map(|dir| PathBuf::from(dir).join("Windissect").join("settings.json"))
 }
 
 fn read_settings() -> serde_json::Value {
@@ -395,7 +415,10 @@ pub fn save_workspace(path: &Path) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(file, serde_json::to_string_pretty(&settings).unwrap_or_default())
+    std::fs::write(
+        file,
+        serde_json::to_string_pretty(&settings).unwrap_or_default(),
+    )
 }
 
 pub fn human_size(bytes: u64) -> String {

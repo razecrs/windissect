@@ -24,6 +24,8 @@ fn main() {
         // MSVC's linker takes a compiled .res directly.
         println!("cargo:rustc-link-arg-bins={}", out.display());
     } else {
-        println!("cargo:warning=no resource compiler (llvm-rc or rc) found; the exe keeps the default icon");
+        println!(
+            "cargo:warning=no resource compiler (llvm-rc or rc) found; the exe keeps the default icon"
+        );
     }
 }
