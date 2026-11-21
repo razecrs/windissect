@@ -29,6 +29,10 @@ store, never source control.
 - `/links` returns official project, release and legal links.
 - `/support` privately shows the reproducibility checklist.
 - `/ping` is a private health check.
+- `/version` shows the latest release with download links. Pass `yours` (from
+  `windissect --version`) to see whether you are up to date.
+- `/changelog` lists what changed in the latest release.
+- `/todo` lists the known issues being worked on and the open report count.
 
 Moderation commands provide persistent case numbers and private `mod-logs`:
 `/warn`, `/warnings`, `/unwarn`, `/case`, `/timeout`, `/untimeout`, `/kick`,

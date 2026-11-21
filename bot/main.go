@@ -48,6 +48,7 @@ func newBot() *starlings.Client {
 	registerWindowsTools(bot)
 	registerCompilerExplorer(bot)
 	registerTriage(bot)
+	registerProjectStatus(bot)
 	bot.On(func(r *starlings.Ready) {
 		log.Printf("Windissect bot online as %s", r.User.Tag())
 		if appID := bot.ApplicationID(); appID != 0 {

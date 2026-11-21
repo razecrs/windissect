@@ -44,7 +44,7 @@ func TestBotDefinesExpectedCommands(t *testing.T) {
 	t.Setenv("DISCORD_TOKEN", "")
 	t.Setenv("WINDISSECT_DATA_DIR", t.TempDir())
 	commands := newBot().SlashDefinitions()
-	if len(commands) != 35 {
-		t.Fatalf("got %d commands, want 35", len(commands))
+	if len(commands) != 38 {
+		t.Fatalf("got %d commands, want 38", len(commands))
 	}
 }
