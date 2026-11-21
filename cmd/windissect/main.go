@@ -608,7 +608,10 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool
 			return processOutcome{}, fmt.Errorf("invalid PDB GUID+age")
 		}
 		targetPdbPath := filepath.Join(probeDir, "symbols", pdbName, key, pdbName)
-		if err := validatePDB(targetPdbPath); err == nil {
+		if local := findLocalPDB(dllPath, pdbName, key); local != "" {
+			fmt.Printf("[+] Using local PDB at %s\n", local)
+			pdbPath = local
+		} else if err := validatePDB(targetPdbPath); err == nil {
 			fmt.Printf("[+] Using existing PDB at %s\n", targetPdbPath)
 			pdbPath = targetPdbPath
 		} else {
