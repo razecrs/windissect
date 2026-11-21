@@ -70,11 +70,22 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install Clang
-      uses: aminya/setup-cpp@v1
-      with:
-        # Pinned: the runner's MSVC STL rejects Clang older than 22, and the
-        # action's default LLVM lags behind.
-        compiler: llvm-23.1.6
+      # The runner's MSVC STL rejects Clang older than 22, and setup-cpp only
+      # knows LLVM versions from its own built-in list, so fetch the official
+      # Windows build directly.
+      shell: pwsh
+      env:
+        LLVM_VERSION: 23.1.6
+      run: |
+        $name = "clang+llvm-$env:LLVM_VERSION-x86_64-pc-windows-msvc"
+        $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/$name.tar.xz"
+        $archive = Join-Path $env:RUNNER_TEMP 'llvm.tar.xz'
+        Invoke-WebRequest -Uri $url -OutFile $archive
+        tar -xf $archive -C $env:RUNNER_TEMP
+        $bin = Join-Path $env:RUNNER_TEMP $name 'bin'
+        & (Join-Path $bin 'clang.exe') --version
+        if ($LASTEXITCODE -ne 0) { throw "clang $env:LLVM_VERSION did not run" }
+        $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
     - name: Analyze and verify installed AMSI
       shell: pwsh
