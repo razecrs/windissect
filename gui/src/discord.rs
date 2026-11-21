@@ -120,7 +120,13 @@ impl Settings {
 
     pub fn path_display() -> String {
         settings_path().map_or_else(
-            || r"%APPDATA%\Windissect\settings.json".into(),
+            || {
+                if cfg!(windows) {
+                    r"%APPDATA%\Windissect\settings.json".into()
+                } else {
+                    "~/.config/Windissect/settings.json".into()
+                }
+            },
             |p| p.display().to_string(),
         )
     }

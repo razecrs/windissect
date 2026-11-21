@@ -170,6 +170,13 @@ impl Engine {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             command.creation_flags(CREATE_NO_WINDOW);
         }
+        // Its own process group, so cancelling can stop the analyzer the
+        // fleet starts as well (see kill_tree).
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(err) => {
@@ -332,6 +339,21 @@ fn kill_tree(child: &mut Child) {
             if status.is_ok_and(|s| s.success()) {
                 return;
             }
+        }
+    }
+    // The child leads its own process group (see `Engine::stream`), so a
+    // negative PID reaches everything it started.
+    #[cfg(unix)]
+    {
+        let status = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if status.is_ok_and(|s| s.success()) {
+            let _ = child.wait();
+            return;
         }
     }
     let _ = child.kill();
