@@ -52,6 +52,10 @@ mkdir -p "$target_dir/release"
 fleet="$target_dir/release/windissect-fleet"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags '-s -w' -o "$fleet" ./cmd/windissect
 
+echo "==> TUI (standalone, Bun)"
+tui="$target_dir/release/windissect-tui"
+(cd tui && npm ci --no-audit --no-fund && bun build-exe.ts bun-linux-x64 "$tui")
+
 echo "==> smoke tests"
 reported="$("$cli" --version)"
 case "$reported" in
@@ -69,6 +73,7 @@ rm -rf "$stage"
 mkdir -p "$stage"
 install -m 755 "$cli" "$stage/windissect"
 install -m 755 "$fleet" "$stage/windissect-fleet"
+install -m 755 "$tui" "$stage/windissect-tui"
 install -m 755 "$gui" "$stage/windissect-gui"
 strip "$stage/windissect-gui" 2>/dev/null || true
 install -m 755 packaging/linux/install.sh "$stage/install.sh"

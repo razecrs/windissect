@@ -16,7 +16,7 @@ bin_dir="$HOME/.local/bin"
 data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
 app_dir="$data_dir/applications"
 icon_dir="$data_dir/icons/hicolor/256x256/apps"
-binaries=(windissect windissect-fleet windissect-gui)
+binaries=(windissect windissect-fleet windissect-gui windissect-tui)
 
 refresh_caches() {
     if command -v update-desktop-database >/dev/null 2>&1; then
@@ -51,7 +51,7 @@ install_all() {
     chmod 644 "$app_dir/windissect.desktop"
     refresh_caches
 
-    echo "Installed windissect, windissect-fleet and windissect-gui to $bin_dir"
+    echo "Installed windissect, windissect-fleet, windissect-gui and windissect-tui to $bin_dir"
     echo "Menu entry: $app_dir/windissect.desktop"
     case ":$PATH:" in
         *":$bin_dir:"*) ;;

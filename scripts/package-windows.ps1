@@ -36,6 +36,18 @@ try {
     & go build -trimpath -ldflags '-s -w' -o 'target/release/windissect-fleet.exe' './cmd/windissect'
     if ($LASTEXITCODE -ne 0) { throw "fleet build failed ($LASTEXITCODE)" }
 
+    # The TUI ships compiled with Bun, so bare `windissect` works without Node.
+    Push-Location 'tui'
+    try {
+        & npm ci --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed ($LASTEXITCODE)" }
+        & bun build-exe.ts bun-windows-x64 '../target/release/windissect-tui.exe'
+        if ($LASTEXITCODE -ne 0) { throw "TUI build failed ($LASTEXITCODE)" }
+    }
+    finally {
+        Pop-Location
+    }
+
     $reportedVersion = (& 'target/release/windissect.exe' --version | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $reportedVersion -notmatch "(^|\s)$([regex]::Escape($Version))$") {
         throw "CLI version mismatch: expected $Version, got '$reportedVersion'"
@@ -54,6 +66,7 @@ try {
     Copy-Item -LiteralPath 'target/release/windissect-gui.exe' -Destination (Join-Path $stage 'Windissect-GUI.exe')
     Copy-Item -LiteralPath 'target/release/windissect.exe' -Destination (Join-Path $stage 'windissect.exe')
     Copy-Item -LiteralPath 'target/release/windissect-fleet.exe' -Destination (Join-Path $stage 'windissect-fleet.exe')
+    Copy-Item -LiteralPath 'target/release/windissect-tui.exe' -Destination (Join-Path $stage 'windissect-tui.exe')
     Copy-Item -LiteralPath 'packaging/README-Windows.txt' -Destination (Join-Path $stage 'README.txt')
     Copy-Item -LiteralPath 'README.md' -Destination (Join-Path $stage 'README.md')
     Copy-Item -LiteralPath 'LICENSE' -Destination (Join-Path $stage 'LICENSE.txt')

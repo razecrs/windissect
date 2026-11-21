@@ -7,6 +7,8 @@ Start here
 Double-click Windissect-GUI.exe for the desktop workbench.
 
 Command-line users can run windissect.exe from PowerShell or Command Prompt.
+Run it with no arguments for the interactive terminal UI (windissect-tui.exe,
+no Node.js needed), or windissect --help for the commands.
 windissect-fleet.exe manages exact-build PDB downloads and corpus processing;
 the desktop workbench invokes it automatically when needed.
 

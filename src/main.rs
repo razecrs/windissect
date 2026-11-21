@@ -620,33 +620,47 @@ fn launch_tui() -> Result<()> {
     use std::process::{Command, Stdio};
 
     let current_exe = std::env::current_exe()?;
+    let run = |command: &mut Command| -> Result<()> {
+        let status = command
+            .arg("--bin")
+            .arg(&current_exe)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        anyhow::ensure!(status.success(), "Windissect TUI exited with {status}");
+        Ok(())
+    };
+
+    // Releases ship the TUI compiled into a standalone executable beside
+    // this one (tui/build-exe.ts), so it needs no Node.js.
+    let shipped =
+        current_exe.with_file_name(format!("windissect-tui{}", std::env::consts::EXE_SUFFIX));
+    if shipped.is_file() {
+        return run(&mut Command::new(shipped));
+    }
+
+    // In a checkout, the TypeScript build under tui/dist runs on Node.
     let current_dir = std::env::current_dir()?;
     let repo_from_target = current_exe
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent);
-    let roots = [Some(current_dir.as_path()), repo_from_target]
+    for root in [Some(current_dir.as_path()), repo_from_target]
         .into_iter()
-        .flatten();
-
-    for root in roots {
+        .flatten()
+    {
         let built = root.join("tui").join("dist").join("index.js");
         if built.exists() {
-            let status = Command::new("node")
-                .arg(&built)
-                .arg("--bin")
-                .arg(&current_exe)
-                .stdin(Stdio::inherit())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()?;
-            anyhow::ensure!(status.success(), "Windissect TUI exited with {status}");
-            return Ok(());
+            return run(Command::new("node").arg(&built));
         }
     }
 
     anyhow::bail!(
-        "TUI is not built; run `cd tui`, `npm install`, and `npm run build`, then launch windissect again"
+        "the interactive TUI is not installed next to {}.\n\
+         Run `windissect --help` for the commands, or open the Windissect desktop app.\n\
+         Building from source? Run `npm install` and `npm run build` in tui/.",
+        current_exe.display()
     )
 }
 

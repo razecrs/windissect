@@ -7,6 +7,8 @@ What is in this folder
   windissect-gui     desktop workbench (needs a Wayland or X11 session)
   windissect         command-line analyzer, statically linked, runs anywhere
   windissect-fleet   exact-build PDB downloads and corpus processing
+  windissect-tui     interactive terminal UI; `windissect` with no arguments
+                     starts it (no Node.js needed)
   install.sh         optional per-user install, no root needed
   windissect.desktop menu entry, windissect.png its icon
   SHA256SUMS.txt     hashes of every file here
