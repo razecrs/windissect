@@ -3,8 +3,111 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// A Windows tree on a case-sensitive filesystem: the manifest says
+// "windows.ui.xaml.dll" under "system32", the disk says otherwise.
+func TestBareTargetResolvesAcrossCase(t *testing.T) {
+	windowsDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(windowsDir, "System32"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(windowsDir, "System32", "Windows.UI.Xaml.dll")
+	if err := os.WriteFile(real, []byte("MZ"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := resolveTargetPath(targetSpec{File: "windows.ui.xaml.dll"}, windowsDir, t.TempDir())
+	if got == "" {
+		t.Fatal("a differently-cased System32 entry did not resolve")
+	}
+	if info, err := os.Stat(got); err != nil || info.IsDir() {
+		t.Fatalf("resolved to %q, which is not the file: %v", got, err)
+	}
+	if got := resolveTargetPath(targetSpec{File: "absent.dll"}, windowsDir, t.TempDir()); got != "" {
+		t.Fatalf("a missing file resolved to %q", got)
+	}
+}
+
+// With no Windows directory a bare name must not be looked up relative to the
+// working directory, and the error has to say why it was not found.
+func TestBareTargetWithoutWindowsDir(t *testing.T) {
+	cwd := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cwd, "System32"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "System32", "dwmapi.dll"), []byte("MZ"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+	target := targetSpec{File: "dwmapi.dll"}
+	if got := resolveTargetPath(target, "", t.TempDir()); got != "" {
+		t.Fatalf("bare name resolved against the working directory: %q", got)
+	}
+	if msg := missingTargetError(target, ""); !strings.Contains(msg, "./dwmapi.dll") {
+		t.Fatalf("error does not tell the user to pass a path: %q", msg)
+	}
+	if msg := missingTargetError(target, `C:\Windows`); msg != "binary not installed" {
+		t.Fatalf("unexpected error with a Windows directory: %q", msg)
+	}
+}
+
+func TestOutputStemReusesExistingSpelling(t *testing.T) {
+	dir := t.TempDir()
+	if got := existingStemFold(dir, "inputhost", ".json"); got != "inputhost" {
+		t.Fatalf("empty directory changed the stem to %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "InputHost.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := existingStemFold(dir, "inputhost", ".json"); !strings.EqualFold(got, "inputhost") {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, existingStemFold(dir, "inputhost", ".json")+".json")); err != nil {
+		t.Fatalf("folded stem does not name the existing IR: %v", err)
+	}
+}
+
+func TestFindExtractorUsesHostExecutableName(t *testing.T) {
+	base := t.TempDir()
+	release := filepath.Join(base, "target", "release")
+	if err := os.MkdirAll(release, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", "")
+	if got := findExtractor(base, ""); got != "" {
+		t.Fatalf("found an extractor in an empty tree: %q", got)
+	}
+	want := filepath.Join(release, executableName("windissect"))
+	if err := os.WriteFile(want, []byte("x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := findExtractor(base, ""); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// `go build ./cmd/windissect` names the fleet windissect as well; it must not
+// pick itself as the extractor and recurse.
+func TestFindExtractorSkipsItself(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", "")
+	self := filepath.Join(dir, executableName("windissect"))
+	if err := os.WriteFile(self, []byte("fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := findExtractor(t.TempDir(), self); got != "" {
+		t.Fatalf("the fleet chose itself as the extractor: %q", got)
+	}
+	fleet := filepath.Join(dir, executableName("windissect-fleet"))
+	if err := os.WriteFile(fleet, []byte("fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := findExtractor(t.TempDir(), fleet); got != self {
+		t.Fatalf("installed CLI beside the fleet was not found: got %q, want %q", got, self)
+	}
+}
 
 func TestSymbolKeyUsesHexAge(t *testing.T) {
 	got := symbolKey("00112233445566778899AABBCCDDEEFF", 0xA)

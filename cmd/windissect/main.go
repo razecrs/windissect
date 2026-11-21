@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -253,22 +254,55 @@ func downloadPDB(pdbName, correctedGuid string, outPath string) bool {
 	return true
 }
 
-func findExtractor(baseDir string) string {
-	for _, n := range []string{"windissect-core.exe", "windissect-rs.exe"} {
-		p := filepath.Join(baseDir, "target", "release", n)
-		if _, err := os.Stat(p); err == nil {
+// executableName spells a program name the way this host does: with .exe on
+// Windows, bare everywhere else.
+func executableName(name string) string {
+	if runtime.GOOS == "windows" {
+		return name + ".exe"
+	}
+	return name
+}
+
+// findExtractor locates the windissect CLI when --extractor is not given.
+//
+// It only ever looked for target/release/windissect.exe, so on Linux - where
+// cargo writes target/release/windissect - a fresh checkout reported "extractor
+// not found" with the binary sitting right there. An installed fleet, which
+// lives next to the CLI rather than in a checkout, never found it at all.
+//
+// self is the fleet's own path: `go build ./cmd/windissect` names its output
+// windissect too, and running the fleet as its own extractor recurses.
+func findExtractor(baseDir, self string) string {
+	isFile := func(p string) bool {
+		info, err := os.Stat(p)
+		return err == nil && !info.IsDir() && !sameFile(p, self)
+	}
+	release := filepath.Join(baseDir, "target", "release")
+	for _, n := range []string{"windissect-core", "windissect-rs", "windissect", "dui70"} {
+		if p := filepath.Join(release, executableName(n)); isFile(p) {
 			return p
 		}
 	}
-	candidate1 := filepath.Join(baseDir, "target", "release", "windissect.exe")
-	if _, err := os.Stat(candidate1); err == nil {
-		return candidate1
+	if self != "" {
+		if p := filepath.Join(filepath.Dir(self), executableName("windissect")); isFile(p) {
+			return p
+		}
 	}
-	candidate2 := filepath.Join(baseDir, "target", "release", "dui70.exe")
-	if _, err := os.Stat(candidate2); err == nil {
-		return candidate2
+	if p, err := exec.LookPath(executableName("windissect")); err == nil {
+		if abs, absErr := filepath.Abs(p); absErr == nil && isFile(abs) {
+			return abs
+		}
 	}
 	return ""
+}
+
+func sameFile(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	a, errA := os.Stat(left)
+	b, errB := os.Stat(right)
+	return errA == nil && errB == nil && os.SameFile(a, b)
 }
 
 // takeFlag removes a valueless flag and reports whether it was present.
@@ -399,6 +433,42 @@ func installedNotepadFile(relativeParts ...string) string {
 	return ""
 }
 
+// findFileFold resolves base/parts... the way Windows would: each component is
+// tried as spelled, then matched case-insensitively against the directory.
+//
+// Manifests spell names however Microsoft once did ("windows.ui.xaml.dll",
+// "inputhost.dll") and Windows does not care. A Windows tree mounted or copied
+// onto a case-sensitive Linux filesystem does, so every such target read as
+// "binary not installed" with the file present under its real casing.
+func findFileFold(base string, parts ...string) string {
+	current := base
+	for _, part := range parts {
+		next := filepath.Join(current, part)
+		if _, err := os.Stat(next); err != nil {
+			entries, readErr := os.ReadDir(current)
+			if readErr != nil {
+				return ""
+			}
+			found := ""
+			for _, entry := range entries {
+				if strings.EqualFold(entry.Name(), part) {
+					found = filepath.Join(current, entry.Name())
+					break
+				}
+			}
+			if found == "" {
+				return ""
+			}
+			next = found
+		}
+		current = next
+	}
+	if info, err := os.Stat(current); err == nil && !info.IsDir() {
+		return current
+	}
+	return ""
+}
+
 func resolveTargetPath(target targetSpec, windowsDir, probeDir string) string {
 	if filepath.IsAbs(target.File) || strings.ContainsAny(target.File, `/\`) {
 		if info, err := os.Stat(target.File); err == nil && !info.IsDir() {
@@ -406,35 +476,46 @@ func resolveTargetPath(target targetSpec, windowsDir, probeDir string) string {
 		}
 		return ""
 	}
-	system32 := filepath.Join(windowsDir, "System32", target.File)
+	// No Windows directory (a Linux host without SystemRoot): only the probe
+	// directory below can supply a bare name. Joining "" would instead look
+	// for a System32 folder relative to wherever the fleet was started.
+	inWindows := func(parts ...string) string {
+		if windowsDir == "" {
+			return ""
+		}
+		return findFileFold(windowsDir, parts...)
+	}
 	switch target.Source {
 	case "", "system32":
-		if info, err := os.Stat(system32); err == nil && !info.IsDir() {
-			return system32
+		if candidate := inWindows("System32", target.File); candidate != "" {
+			return candidate
 		}
 	case "windows":
-		candidate := filepath.Join(windowsDir, target.File)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if candidate := inWindows(target.File); candidate != "" {
 			return candidate
 		}
 	case "client-core-system-app":
-		candidate := filepath.Join(windowsDir, "SystemApps", "MicrosoftWindows.Client.Core_cw5n1h2txyewy", target.File)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if candidate := inWindows("SystemApps", "MicrosoftWindows.Client.Core_cw5n1h2txyewy", target.File); candidate != "" {
 			return candidate
 		}
 	case "start-menu-system-app":
-		candidate := filepath.Join(windowsDir, "SystemApps", "Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy", target.File)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		if candidate := inWindows("SystemApps", "Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy", target.File); candidate != "" {
 			return candidate
 		}
 	case "windows-app-runtime-x64":
-		programFiles := os.Getenv("ProgramFiles")
-		return newestFile(
-			filepath.Join(programFiles, "WindowsApps", "Microsoft.WindowsAppRuntime.*_*_x64__8wekyb3d8bbwe", target.File),
-			filepath.Join(windowsDir, "SystemApps", "Microsoft.WindowsAppRuntime.CBS*_8wekyb3d8bbwe", target.File),
-		)
+		var patterns []string
+		if programFiles := os.Getenv("ProgramFiles"); programFiles != "" {
+			patterns = append(patterns, filepath.Join(programFiles, "WindowsApps", "Microsoft.WindowsAppRuntime.*_*_x64__8wekyb3d8bbwe", target.File))
+		}
+		if windowsDir != "" {
+			patterns = append(patterns, filepath.Join(windowsDir, "SystemApps", "Microsoft.WindowsAppRuntime.CBS*_8wekyb3d8bbwe", target.File))
+		}
+		return newestFile(patterns...)
 	case "notepad-app-x64":
 		programFiles := os.Getenv("ProgramFiles")
+		if programFiles == "" || runtime.GOOS != "windows" {
+			return ""
+		}
 		candidate := newestPackageFile(
 			filepath.Join(programFiles, "WindowsApps"),
 			"Microsoft.WindowsNotepad_*_x64__8wekyb3d8bbwe",
@@ -468,6 +549,7 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool
 	if stem == "" {
 		stem = strings.TrimSuffix(dllName, filepath.Ext(dllName))
 	}
+	stem = existingStemFold(irDir, stem, ".json")
 	irOut := filepath.Join(irDir, stem+".json")
 
 	// Stage inside the corpus, not the system temp directory.
@@ -628,6 +710,26 @@ func processDLL(dllPath, outputID, probeDir, irDir, exePath string, shallow bool
 		Depth:        depth,
 		SemanticPath: semanticPath,
 	}, nil
+}
+
+// existingStemFold returns the spelling of stem already used in dir, if one
+// differs only in case. Target ids are case-insensitive (see corpusKey), so
+// `pull InputHost.dll` and `pull inputhost.dll` are one target; on Linux they
+// otherwise wrote two IRs, two semantic trees and two refinement reports.
+func existingStemFold(dir, stem, ext string) string {
+	if _, err := os.Stat(filepath.Join(dir, stem+ext)); err == nil {
+		return stem
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return stem
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), stem+ext) {
+			return strings.TrimSuffix(entry.Name(), ext)
+		}
+	}
+	return stem
 }
 
 func runStreaming(command *exec.Cmd) ([]byte, error) {
@@ -815,8 +917,13 @@ func moveFile(source, destination string) error {
 }
 
 // isCrossDeviceError reports the Windows-specific spelling of the same
-// condition, which does not surface as syscall.EXDEV.
+// condition, which does not surface as syscall.EXDEV. Errno 17 is
+// ERROR_NOT_SAME_DEVICE only on Windows; on Linux it is EEXIST, which is not a
+// reason to fall back to copying.
 func isCrossDeviceError(err error) bool {
+	if runtime.GOOS != "windows" {
+		return false
+	}
 	const errorNotSameDevice = syscall.Errno(17)
 	var linkErr *os.LinkError
 	if errors.As(err, &linkErr) {
@@ -909,13 +1016,18 @@ func writeCorpusIndex(root, extractorPath string, results []corpusResult) error 
 		Schema:        1,
 		GeneratedUTC:  time.Now().UTC().Format(time.RFC3339Nano),
 		WindowsBuild:  strings.TrimSpace(os.Getenv("OS_BUILD_NUMBER")),
-		Architecture:  os.Getenv("PROCESSOR_ARCHITECTURE"),
+		Architecture:  hostArchitecture(),
 		ExtractorPath: extractorPath,
 		ExtractorHash: extractorHash,
 		Targets:       results,
 	}
 	if index.WindowsBuild == "" {
-		index.WindowsBuild = fmt.Sprintf("%d.%d.%d", 10, 0, windowsBuild())
+		// "10.0.0" is what a failed probe used to record, which reads as a
+		// real build number. Say there was none instead.
+		index.WindowsBuild = "unknown"
+		if build := windowsBuild(); build != 0 {
+			index.WindowsBuild = fmt.Sprintf("%d.%d.%d", 10, 0, build)
+		}
 	}
 	b, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
@@ -930,6 +1042,22 @@ func writeCorpusIndex(root, extractorPath string, results []corpusResult) error 
 		return err
 	}
 	return writeCorpusReport(root, index)
+}
+
+// hostArchitecture spells the host CPU the way PROCESSOR_ARCHITECTURE does,
+// which only Windows sets.
+func hostArchitecture() string {
+	if arch := os.Getenv("PROCESSOR_ARCHITECTURE"); arch != "" {
+		return arch
+	}
+	switch runtime.GOARCH {
+	case "amd64":
+		return "AMD64"
+	case "386":
+		return "x86"
+	default:
+		return strings.ToUpper(runtime.GOARCH)
+	}
 }
 
 func writeCorpusReport(root string, index corpusIndex) error {
@@ -1079,7 +1207,14 @@ func fileSHA256(name string) (string, error) {
 	return strings.ToUpper(hex.EncodeToString(hash.Sum(nil))), nil
 }
 
+// windowsBuild is the build of the Windows host the fleet runs on, or 0 when
+// there is no such host. Off Windows there is no powershell.exe to ask - or,
+// under WSL, there is one and it answers for a different machine than the one
+// the targets came from.
 func windowsBuild() uint32 {
+	if runtime.GOOS != "windows" {
+		return 0
+	}
 	buildOnce.Do(func() {
 		command := exec.Command("powershell.exe", "-NoProfile", "-Command", "[Environment]::OSVersion.Version.Build")
 		out, err := command.Output()
@@ -1107,8 +1242,9 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 		result := corpusResult{ID: target.ID, File: target.File, Area: target.Area, Required: target.Required}
 		result.SourcePath = resolveTargetPath(target, windowsDir, probeDir)
 		if result.SourcePath == "" {
-			result.Error = "binary not installed"
+			result.Error = missingTargetError(target, windowsDir)
 			if target.Required {
+				fmt.Printf("[!] %s: %s\n", target.ID, result.Error)
 				result.Status = "failed-required"
 				failed = true
 			} else {
@@ -1152,6 +1288,34 @@ func processTargets(targets []targetSpec, windowsDir, root, extractorPath string
 	return results, failed
 }
 
+// missingTargetError says why a target did not resolve. A bare name on a host
+// with no Windows directory is not "not installed" - there was nowhere to look -
+// and saying so is the difference between a Linux user passing a path and a
+// Linux user wondering what is wrong with their copy of the DLL.
+func missingTargetError(target targetSpec, windowsDir string) string {
+	bare := !filepath.IsAbs(target.File) && !strings.ContainsAny(target.File, `/\`)
+	if bare && windowsDir == "" {
+		return fmt.Sprintf("binary not found: %q is a bare name, which is looked up in a Windows "+
+			"directory and this host has none; pass a path to the file (e.g. ./%s), or set "+
+			"SystemRoot to a mounted Windows directory (e.g. /mnt/c/Windows)", target.File, target.File)
+	}
+	return "binary not installed"
+}
+
+// hostWindowsDir is the Windows directory bare target names resolve against.
+// Windows always has one. Elsewhere it exists only if SystemRoot points at a
+// mounted or copied Windows tree; defaulting to C:\Windows there produced a
+// relative path that could never match anything.
+func hostWindowsDir() string {
+	if dir := os.Getenv("SystemRoot"); dir != "" {
+		return dir
+	}
+	if runtime.GOOS == "windows" {
+		return `C:\Windows`
+	}
+	return ""
+}
+
 func reusableResult(result corpusResult, sourcePath string, shallow bool) bool {
 	if !strings.HasPrefix(result.Status, "verified-") || result.IR == "" || result.SHA256 == "" {
 		return false
@@ -1189,17 +1353,20 @@ Commands:
   all     pull, then emit (default)
   pull    for each target: extract, fetch the exact PDB from Microsoft's
           symbol server, extract again with it, verify, record build history
-  emit    write C/C++ headers and a Rust crate for every IR in <root>\ir
+  emit    write C/C++ headers and a Rust crate for every IR in <root>/ir
   help    show this message
 
 Targets:
   With no --manifest and no binary arguments, the built-in Windows UI list
   is used (see manifests/windows-ui.json). Binary arguments replace the list
-  for that run: a bare file name is looked up in System32, a path is used as
-  given.
+  for that run: a bare file name is looked up in %SystemRoot%\System32, a
+  path is used as given. Off Windows there is no System32 unless SystemRoot
+  names a mounted Windows directory, so pass paths (./twinui.dll).
 
 Options:
-  --extractor PATH  windissect.exe to run (default: target\release\windissect.exe)
+  --extractor PATH  windissect CLI to run (default: target/release/windissect
+                    in the repository, else the one beside this program, else
+                    PATH)
   --root DIR        where ir, probe, history, headers and rust are written
                     (default: the repository root)
   --manifest FILE   JSON target list, see docs/fleet.md
@@ -1260,7 +1427,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	extractorPath := findExtractor(baseDir)
+	extractorPath := findExtractor(baseDir, exePath)
 	if extractorOption != "" {
 		extractorPath, err = filepath.Abs(extractorOption)
 		if err != nil {
@@ -1352,10 +1519,7 @@ func main() {
 		}
 	}
 
-	windowsDir := os.Getenv("SystemRoot")
-	if windowsDir == "" {
-		windowsDir = `C:\Windows`
-	}
+	windowsDir := hostWindowsDir()
 
 	switch cmd {
 	case "history":
