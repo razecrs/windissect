@@ -226,13 +226,26 @@ impl Engine {
         reports.into_iter().next()
     }
 
-    /// Every DLL in this machine's System32, by name.
-    pub fn system_dlls() -> Vec<DllEntry> {
-        let root = std::env::var_os("SystemRoot")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-            .join("System32");
-        let mut out: Vec<DllEntry> = std::fs::read_dir(&root)
+    /// Every DLL in a System32, by name, and which System32 that was. On
+    /// Windows it is this machine's. Elsewhere there is no System32 of our
+    /// own, so it is the first Windows install found mounted, or `None`.
+    pub fn system_dlls() -> (Option<PathBuf>, Vec<DllEntry>) {
+        #[cfg(windows)]
+        let root = Some(
+            std::env::var_os("SystemRoot")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+                .join("System32"),
+        );
+        #[cfg(not(windows))]
+        let root = mounted_system32(&mount_bases()).into_iter().next();
+        let dlls = root.as_deref().map(Self::dlls_in).unwrap_or_default();
+        (root, dlls)
+    }
+
+    /// Every DLL directly in `dir`, by name.
+    pub fn dlls_in(dir: &Path) -> Vec<DllEntry> {
+        let mut out: Vec<DllEntry> = std::fs::read_dir(dir)
             .into_iter()
             .flatten()
             .flatten()
@@ -495,5 +508,95 @@ pub fn human_size(bytes: u64) -> String {
         format!("{bytes} B")
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// Where a Linux machine mounts drives, each holding one folder per drive:
+/// WSL puts Windows' own drives under /mnt, and desktops put NTFS partitions
+/// under /media/$USER or /run/media/$USER (bare /media on some distros).
+#[cfg(not(windows))]
+fn mount_bases() -> Vec<PathBuf> {
+    let mut bases = vec![PathBuf::from("/mnt"), PathBuf::from("/media")];
+    if let Some(user) = std::env::var_os("USER") {
+        bases.push(Path::new("/media").join(&user));
+        bases.push(Path::new("/run/media").join(&user));
+    }
+    bases
+}
+
+/// Every `<base>/<drive>/Windows/System32` that exists, in order of `bases`
+/// then drive name, so WSL's /mnt/c comes first. Names are matched ignoring
+/// case because NTFS mounts do not agree on whether `Windows` keeps its case.
+#[cfg(any(not(windows), test))]
+fn mounted_system32(bases: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for base in bases {
+        let mut drives: Vec<PathBuf> = std::fs::read_dir(base)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .collect();
+        drives.sort();
+        for drive in drives {
+            if let Some(dir) =
+                child_named(&drive, "windows").and_then(|w| child_named(&w, "system32"))
+            {
+                if !found.contains(&dir) {
+                    found.push(dir);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The subdirectory of `dir` called `name`, ignoring ASCII case.
+#[cfg(any(not(windows), test))]
+fn child_named(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .find(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_mounted_system32_ignoring_case() {
+        let root = std::env::temp_dir().join(format!("wd-mounts-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mnt = root.join("mnt");
+        let media = root.join("media");
+        std::fs::create_dir_all(mnt.join("c/Windows/System32")).unwrap();
+        std::fs::create_dir_all(mnt.join("d/data")).unwrap();
+        std::fs::create_dir_all(mnt.join("wslg")).unwrap();
+        std::fs::create_dir_all(media.join("Win11/WINDOWS/system32")).unwrap();
+        std::fs::create_dir_all(media.join("half/Windows")).unwrap();
+        std::fs::write(mnt.join("c/Windows/System32/kernel32.dll"), b"MZ").unwrap();
+        std::fs::write(mnt.join("c/Windows/System32/notes.txt"), b"").unwrap();
+
+        let found = mounted_system32(&[mnt.clone(), root.join("absent"), media.clone()]);
+        assert_eq!(
+            found,
+            vec![
+                mnt.join("c/Windows/System32"),
+                media.join("Win11/WINDOWS/system32")
+            ]
+        );
+        let dlls = Engine::dlls_in(&found[0]);
+        assert_eq!(dlls.len(), 1);
+        assert_eq!(dlls[0].name, "kernel32.dll");
+        assert!(mounted_system32(&[root.join("absent")]).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

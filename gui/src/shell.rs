@@ -4,7 +4,8 @@
 //!   output panel
 //!   status bar
 //!
-//! Flow: drop a file, open one, or pick from this machine's System32;
+//! Flow: drop a file, open one, or pick from a System32 (this machine's, or
+//! off Windows a mounted install's);
 //! Windissect reads where its PDB lives, asks before downloading it, extracts
 //! and verifies. Each section of the IR then opens as an editor tab, and the
 //! inspector shows whatever row is selected.
@@ -137,12 +138,29 @@ const GOTO_LIMIT: usize = 50;
 /// Rows PageUp/PageDown move by in a section list.
 const PAGE_ROWS: usize = 20;
 
-const GUIDE: &str = "# Start here\n\nDrop a **DLL**, **EXE** or **.winmd** onto the start page, open one, \
-or switch on **List Windows DLLs** and pick one from this machine.\n\nFor a Windows binary, Windissect \
+/// The guide, with where the DLL list comes from filled in: only Windows has
+/// a System32 of its own to list.
+macro_rules! guide {
+    ($dlls_from:literal) => {
+        concat!(
+            "# Start here\n\nDrop a **DLL**, **EXE** or **.winmd** onto the start page, open one, \
+or switch on **List Windows DLLs** and pick one ",
+            $dlls_from,
+            "\n\nFor a Windows binary, Windissect \
 reads where its PDB lives and asks before downloading it from Microsoft's symbol server. With the PDB it \
 recovers internal names, types and vtables; without it, exports only.\n\nEach part of the result opens as \
 a tab. Select a row to inspect it. Everything is written to the workspace (Tools \u{2192} Open workspace). \
-Nothing here is guessed: the IR keeps verified facts apart from candidates, and `verify` checks it.";
+Nothing here is guessed: the IR keeps verified facts apart from candidates, and `verify` checks it."
+        )
+    };
+}
+#[cfg(windows)]
+const GUIDE: &str = guide!("from this machine.");
+#[cfg(not(windows))]
+const GUIDE: &str = guide!(
+    "from a mounted Windows install (WSL's /mnt/c, or a drive under /media), \
+or from a folder you choose."
+);
 
 const TOOLS: [(&str, &str, &str); 7] = [
     ("Verify", "shield-check", "re-check the IR's invariants"),
@@ -186,6 +204,13 @@ pub struct Shell {
     stage: Stage,
     list_system: bool,
     system_dlls: Arc<Vec<DllEntry>>,
+    /// The folder `system_dlls` came from; `None` once a search found no
+    /// Windows install to list (only possible off Windows). Only shown off
+    /// Windows, where it is not obvious whose System32 this is.
+    #[cfg_attr(windows, allow(dead_code))]
+    dll_dir: Option<PathBuf>,
+    #[cfg_attr(windows, allow(dead_code))]
+    dll_scanned: bool,
     dll_query: Entity<InputState>,
     dll_filtered: Vec<usize>,
     query: Entity<InputState>,
@@ -261,6 +286,8 @@ impl Shell {
             stage: Stage::Choose,
             list_system: false,
             system_dlls: Arc::new(Vec::new()),
+            dll_dir: None,
+            dll_scanned: false,
             dll_query,
             dll_filtered: Vec::new(),
             query,
@@ -388,13 +415,35 @@ impl Shell {
                     .spawn(async { Engine::system_dlls() })
                     .await;
                 let _ = this.update(cx, |this, cx| {
-                    this.system_dlls = Arc::new(dlls);
+                    (this.dll_dir, this.system_dlls) = (dlls.0, Arc::new(dlls.1));
+                    this.dll_scanned = true;
                     this.refilter_dlls(cx);
                 });
             })
             .detach();
         }
         cx.notify();
+    }
+
+    /// Lists the DLLs in a folder the user picks. Off Windows this is the way
+    /// in when no mounted Windows install turned up, or the wrong one did.
+    #[cfg(not(windows))]
+    fn pick_dll_dir(&mut self, cx: &mut Context<Self>) {
+        self.pick_path(true, "List DLLs", cx, |_, dir, cx| {
+            cx.spawn(async move |this, cx| {
+                let scan = dir.clone();
+                let dlls = cx
+                    .background_executor()
+                    .spawn(async move { Engine::dlls_in(&scan) })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    (this.dll_dir, this.system_dlls) = (Some(dir), Arc::new(dlls));
+                    this.dll_scanned = true;
+                    this.refilter_dlls(cx);
+                });
+            })
+            .detach();
+        });
     }
 
     fn refilter_dlls(&mut self, cx: &mut Context<Self>) {
@@ -2089,6 +2138,34 @@ impl Shell {
         if self.list_system {
             let total = self.system_dlls.len();
             let count = self.dll_filtered.len();
+            let mut header = div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(div().w(px(360.)).child(Input::new(&self.dll_query).small()));
+            #[cfg(windows)]
+            {
+                header = header.child(caption(format!("{count} of {total}")));
+            }
+            // Off Windows the list is somebody else's System32, or none at
+            // all, so say which, and let the user point at one instead.
+            #[cfg(not(windows))]
+            {
+                let where_from = match (&self.dll_dir, self.dll_scanned) {
+                    (Some(dir), _) => format!("{count} of {total} in {}", dir.display()),
+                    (None, true) => "No Windows install found under /mnt, /media or \
+                                     /run/media. Choose a folder of DLLs instead."
+                        .to_string(),
+                    (None, false) => format!("{count} of {total}"),
+                };
+                header = header.child(caption(where_from)).child(
+                    Button::new("dll-dir")
+                        .small()
+                        .outline()
+                        .label("Choose folder\u{2026}")
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pick_dll_dir(cx))),
+                );
+            }
             body = body.child(
                 div()
                     .flex()
@@ -2096,14 +2173,7 @@ impl Shell {
                     .flex_1()
                     .min_h_0()
                     .gap_2()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(div().w(px(360.)).child(Input::new(&self.dll_query).small()))
-                            .child(caption(format!("{count} of {total}"))),
-                    )
+                    .child(header)
                     .child(
                         uniform_list(
                             "dlls",
