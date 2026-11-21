@@ -36,3 +36,6 @@
 
 # Release build output (attach to GitHub releases instead)
 /dist/
+
+# Fleet driver build output (go build); ship it in releases, not the repo
+/windissect.exe

@@ -1,4 +1,19 @@
+<div align="center">
+
+<img src="gui/assets/brand/windissect-256.png" alt="Windissect logo" width="112">
+
 # Windissect
+
+**Proven maps of Windows internals, from a binary and its PDB.**
+
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-5b84f7)](LICENSE)
+![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-5b84f7)
+![Windows x64](https://img.shields.io/badge/platform-Windows%20x64-2f4fc0)
+![Rust](https://img.shields.io/badge/built%20with-Rust-2f4fc0)
+
+[Desktop app](#desktop-app) · [Quick start](#quick-start) · [ReWindows corpus](#rewindows) · [Docs](#documentation)
+
+</div>
 
 Windissect turns a Windows PE binary (DLL, EXE or SYS) and its matching
 Microsoft PDB into a build-anchored, machine-readable map of that binary's
@@ -51,6 +66,23 @@ ExplorerPatcher:
 
 Extracting the DLL and PDB takes about 2 seconds, and semantic refinement about
 14 seconds.
+
+## Desktop app
+
+Version 1.0 ships a desktop workbench, `Windissect-GUI.exe`. It opens a
+binary, downloads the exact PDB when needed, and lets you browse types,
+vtables, functions and evidence without touching the command line. No
+installation or administrator rights are needed. Output goes to
+`%LOCALAPPDATA%\Windissect\workspace` by default.
+
+It can also show what you're inspecting on your Discord profile, the way
+editor extensions do. That goes through the Discord desktop app's local pipe,
+needs no login or token, and can be switched off under Tools. See
+[gui/DISCORD.md](gui/DISCORD.md).
+
+The Windows package also includes `windissect.exe` (the CLI) and
+`windissect-fleet.exe` (batch runs). Build it with
+`pwsh -File scripts/package-windows.ps1`.
 
 ## Quick start
 
@@ -224,6 +256,22 @@ This repository doesn't include any Microsoft binaries or PDBs.
 - [Fleet runs](docs/fleet.md): manifests, batch runs, output layout
 - [Known issues](docs/known-issues.md)
 - [Release notes](RELEASE.md)
+
+## Meet Elytra
+
+<p align="center">
+  <img src="gui/assets/brand/mascot/elytra-idle.png" alt="Elytra" width="96">
+  <img src="gui/assets/brand/mascot/elytra-wave.png" alt="Elytra waving" width="96">
+  <img src="gui/assets/brand/mascot/elytra-happy.png" alt="Elytra happy" width="96">
+  <img src="gui/assets/brand/mascot/elytra-wow.png" alt="Elytra surprised" width="96">
+  <img src="gui/assets/brand/mascot/elytra-sleep.png" alt="Elytra asleep" width="96">
+  <img src="gui/assets/brand/mascot/elytra-pixel.png" alt="Elytra in pixels" width="96">
+</p>
+
+Elytra is Windissect's mascot, a small beetle named after the hard wing cases
+that close over its back. The seam where they meet runs at the same angle as
+the blade in the logo. The artwork and its source are in
+[gui/assets/brand/mascot](gui/assets/brand/mascot).
 
 ## License
 
