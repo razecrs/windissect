@@ -108,6 +108,6 @@ fn locking_processes(path: &Path) -> Vec<String> {
 }
 
 #[cfg(not(windows))]
-fn locking_processes(_path: &Path) -> Vec<String> {
+const fn locking_processes(_path: &Path) -> Vec<String> {
     Vec::new()
 }

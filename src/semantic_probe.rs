@@ -3,6 +3,7 @@
 use crate::model::{Database, SemanticEnum, SemanticEnumValue, SemanticStatus};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
+#[cfg(any(windows, test))]
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::Path;
