@@ -92,10 +92,32 @@ func (s *server) apply(ctx context.Context) error {
 	if err := s.configureGuild(ctx); err != nil {
 		return err
 	}
+	if err := s.ensureCommunity(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureAnnouncementChannels(ctx); err != nil {
+		return err
+	}
 	if err := s.ensureGuides(ctx); err != nil {
 		return err
 	}
-	return s.ensureInvite(ctx)
+	if err := s.ensureEmojis(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureWelcomeScreen(ctx); err != nil {
+		return err
+	}
+	if err := s.ensureOnboarding(ctx); err != nil {
+		return err
+	}
+	code, err := s.ensureInvite(ctx)
+	if err != nil {
+		return err
+	}
+	if err := s.ensureAutoMod(ctx, code); err != nil {
+		return err
+	}
+	return s.ensurePosts(ctx)
 }
 
 func (s *server) ensureOwnerRole(ctx context.Context) error {
@@ -249,6 +271,11 @@ func (s *server) renameStarter(ctx context.Context, kind starlings.ChannelType, 
 }
 
 func (s *server) ensureChannel(ctx context.Context, spec channelSpec) (*starlings.Channel, error) {
+	if spec.typeID == starlings.ChannelGuildText {
+		if _, converted := s.channels[channelKey(starlings.ChannelGuildAnnouncement, spec.name)]; converted {
+			spec.typeID = starlings.ChannelGuildAnnouncement
+		}
+	}
 	key := channelKey(spec.typeID, spec.name)
 	channel, found := s.channels[key]
 	var parentID starlings.Snowflake
@@ -293,7 +320,7 @@ func (s *server) ensurePermissions(ctx context.Context) error {
 		"getting-started": true, "ci-and-builds": true,
 	}
 	for name := range readOnly {
-		channel := s.channels[channelKey(starlings.ChannelGuildText, name)]
+		channel := s.text(name)
 		deny := starlings.PermissionSendMessages | starlings.PermissionCreatePublicThreads |
 			starlings.PermissionCreatePrivateThreads | starlings.PermissionSendMessagesInThreads
 		if err := s.client.SetPermissionOverwrite(ctx, channel.ID, s.everyoneID, 0, deny, starlings.OverwriteRole, auditReason); err != nil {
@@ -305,7 +332,7 @@ func (s *server) ensurePermissions(ctx context.Context) error {
 			return fmt.Errorf("allow maintainers in %s: %w", name, err)
 		}
 	}
-	contributors := s.channels[channelKey(starlings.ChannelGuildText, "contributors")]
+	contributors := s.text("contributors")
 	denySend := starlings.PermissionSendMessages | starlings.PermissionSendMessagesInThreads
 	if err := s.client.SetPermissionOverwrite(ctx, contributors.ID, s.everyoneID, 0, denySend, starlings.OverwriteRole, auditReason); err != nil {
 		return fmt.Errorf("lock contributors: %w", err)
@@ -319,7 +346,7 @@ func (s *server) ensurePermissions(ctx context.Context) error {
 		}
 	}
 	privateCategory := s.channels[channelKey(starlings.ChannelGuildCategory, "06 · MODERATION")]
-	modLogs := s.channels[channelKey(starlings.ChannelGuildText, "mod-logs")]
+	modLogs := s.text("mod-logs")
 	privateDeny := starlings.PermissionViewChannel
 	privateAllow := starlings.PermissionViewChannel | starlings.PermissionSendMessages |
 		starlings.PermissionEmbedLinks | starlings.PermissionAttachFiles | starlings.PermissionReadMessageHistory
@@ -339,14 +366,16 @@ func (s *server) ensurePermissions(ctx context.Context) error {
 
 func (s *server) configureGuild(ctx context.Context) error {
 	description := "Evidence-backed Windows internals, ABI recovery, generated interfaces, and the people building Windissect."
-	verification, notifications, contentFilter := 1, 1, 2
-	welcome := s.channels[channelKey(starlings.ChannelGuildText, "welcome")]
-	rules := s.channels[channelKey(starlings.ChannelGuildText, "rules")]
-	announcements := s.channels[channelKey(starlings.ChannelGuildText, "announcements")]
+	verification, notifications, contentFilter := 2, 1, 2 // medium: account older than 5 minutes
+	welcome := s.text("welcome")
+	rules := s.text("rules")
+	// Discord posts admin-only notices to the "community updates" channel, so
+	// it belongs with the moderators, not in the public #announcements.
+	modLogs := s.text("mod-logs")
 	params := starlings.GuildParams{
 		Description: &description, VerificationLevel: &verification,
 		DefaultMessageNotifications: &notifications, ExplicitContentFilter: &contentFilter,
-		SystemChannelID: &welcome.ID, RulesChannelID: &rules.ID, PublicUpdatesChannelID: &announcements.ID,
+		SystemChannelID: &welcome.ID, RulesChannelID: &rules.ID, PublicUpdatesChannelID: &modLogs.ID,
 	}
 	if iconPath := strings.TrimSpace(os.Getenv("WINDISSECT_ICON_FILE")); iconPath != "" {
 		data, err := os.ReadFile(iconPath)
@@ -363,18 +392,18 @@ func (s *server) configureGuild(ctx context.Context) error {
 	return nil
 }
 
-func (s *server) ensureInvite(ctx context.Context) error {
-	welcome := s.channels[channelKey(starlings.ChannelGuildText, "welcome")]
+func (s *server) ensureInvite(ctx context.Context) (string, error) {
+	welcome := s.text("welcome")
 	zero := 0
 	no := false
 	invite, err := s.client.CreateInvite(ctx, welcome.ID, starlings.InviteParams{
 		MaxAge: &zero, MaxUses: &zero, Temporary: &no, Unique: &no,
 	}, auditReason)
 	if err != nil {
-		return fmt.Errorf("create welcome invite: %w", err)
+		return "", fmt.Errorf("create welcome invite: %w", err)
 	}
 	log.Printf("community invite: https://discord.gg/%s", invite.Code)
-	return nil
+	return invite.Code, nil
 }
 
 func (s *server) ensureGuides(ctx context.Context) error {
@@ -382,8 +411,8 @@ func (s *server) ensureGuides(ctx context.Context) error {
 		"welcome": starlings.NewEmbed("Welcome to Windissect").
 			SetColor(0x86A9E8).
 			SetDescription("Windissect turns Windows binaries and matching PDBs into interfaces it can prove. This server is where users, reverse engineers, Windows modders, and contributors compare evidence—not guesses.").
-			AddField("Start", "Read <#"+s.channels[channelKey(starlings.ChannelGuildText, "rules")].ID.String()+">, then follow <#"+s.channels[channelKey(starlings.ChannelGuildText, "getting-started")].ID.String()+">.", false).
-			AddField("Need help?", "Run `/support`, then post the resulting checklist in <#"+s.channels[channelKey(starlings.ChannelGuildText, "help")].ID.String()+">.", false).
+			AddField("Start", "Read <#"+s.text("rules").ID.String()+">, then follow <#"+s.text("getting-started").ID.String()+">.", false).
+			AddField("Need help?", "Run `/support`, then post the resulting checklist in <#"+s.text("help").ID.String()+">.", false).
 			AddField("Here to research?", "Use the RESEARCH category for Windows internals, methods, generated output, and ReWindows data.", false).
 			SetFooter("Windissect setup · welcome", ""),
 		"rules": starlings.NewEmbed("Community rules").
@@ -395,13 +424,15 @@ func (s *server) ensureGuides(ctx context.Context) error {
 			AddField("4 · Make reports reproducible", "Include versions, exact commands, Windows build, logs, and the smallest safe artifact that reproduces the issue.", false).
 			AddField("5 · Respect the room", "No harassment, spam, slurs, impersonation, or unsolicited promotion. Critique technical claims, not people.", false).
 			SetFooter("Windissect setup · rules", ""),
-		"getting-started": starlings.NewEmbed("Your first verified output").
+		"getting-started": starlings.NewEmbed("Get started in two minutes").
 			SetColor(0x57F287).
-			SetDescription("On Windows with Rust installed, clone Windissect and run the safe demo against your installed `amsi.dll`.").
-			AddField("Run", "```powershell\npwsh -File scripts/demo.ps1\n```", false).
-			AddField("Then inspect", "`target/demo/amsi/` contains IR, verification, headers, Rust bindings, symbols, evidence, and documentation.", false).
-			AddField("Full quick start", "https://github.com/razecrs/windissect/blob/main/docs/quickstart.md", false).
-			AddField("Important", "Candidate output is useful research material, but it is not a proven callable ABI. Windissect keeps those surfaces separate on purpose.", false).
+			SetDescription("Windissect runs on Windows 10 and 11 (x64). Nothing else to install.").
+			AddField("1 · Download", "Grab the installer from the [latest release](https://github.com/razecrs/windissect/releases/latest). It installs for your user only, so no admin prompt. Prefer no install? Take the portable zip.", false).
+			AddField("2 · If Windows warns", "The builds aren't code-signed yet. On the SmartScreen screen choose **More info → Run anyway**.", false).
+			AddField("3 · Open a binary", "Start **Windissect** from the Start menu and open any DLL, for example `C:\\Windows\\System32\\uxtheme.dll`. It downloads the matching PDB from Microsoft for you.", false).
+			AddField("4 · Explore", "Browse Types, Classes, VTables, Functions and the Evidence behind each one. Output is saved under `%LOCALAPPDATA%\\Windissect\\workspace`.", false).
+			AddField("Prefer the command line?", "`windissect --help`, or see the [quick start](https://github.com/razecrs/windissect/blob/main/docs/quickstart.md). Building from source needs Rust.", false).
+			AddField("Good to know", "Anything marked *candidate* is research material, not a proven callable ABI. Windissect keeps the two apart on purpose.", false).
 			SetFooter("Windissect setup · getting-started", ""),
 		"help": starlings.NewEmbed("Before asking for help").
 			SetColor(0xFEE75C).
@@ -418,6 +449,7 @@ func (s *server) ensureGuides(ctx context.Context) error {
 			SetColor(0x86A9E8).
 			SetDescription("Slash commands are available server-wide; this channel keeps experiments and dice rolls out of technical threads.").
 			AddField("Project", "`/about` · `/start` · `/links` · `/support` · `/ping`", false).
+			AddField("Releases", "`/version` · `/changelog` · `/todo`: latest release and downloads, what changed, and what's being worked on.", false).
 			AddField("Community", "`/coinflip` · `/roll` · `/choose` · `/eightball` · `/avatar`", false).
 			AddField("Technical tools", "`/hex` · `/snowflake` · `/rva` · `/base` · `/address` · `/winstatus` · `/pemachine` · `/magic` · `/guid` · `/windoc`", false).
 			AddField("Compile lab", "`/compilers` · `/compile` — C, C++, and Rust to assembly through Compiler Explorer; execution disabled.", false).
@@ -432,7 +464,7 @@ func (s *server) ensureGuides(ctx context.Context) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		channel := s.channels[channelKey(starlings.ChannelGuildText, name)]
+		channel := s.text(name)
 		pins, err := s.client.Pins(ctx, channel.ID)
 		if err != nil {
 			return fmt.Errorf("list pins in %s: %w", name, err)
