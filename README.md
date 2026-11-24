@@ -14,6 +14,12 @@
 
 [Download](https://github.com/razecrs/windissect/releases/latest) · [Desktop app](#desktop-app) · [Quick start](#quick-start) · [ReWindows corpus](#rewindows) · [Docs](#documentation) · [Discord](https://discord.gg/wveT8zFCus)
 
+<br>
+
+<img src="docs/media/windissect-demo.gif" alt="Opening dui70.dll in Windissect: downloading its PDB, analyzing it, then browsing symbols, functions, types, classes, vtables, claims and conflicts" width="880">
+
+<sub>A first run on <code>dui70.dll</code>, from a cold cache. The analysis is shown at 4× speed and browsing at 2.5×.</sub>
+
 </div>
 
 Windissect turns a Windows PE binary (DLL, EXE or SYS) and its matching
